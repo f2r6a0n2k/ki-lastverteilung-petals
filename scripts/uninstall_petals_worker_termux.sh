@@ -1,20 +1,18 @@
 #!/bin/bash
-# Petals Worker Deinstallation für Termux
+# llama.cpp Worker Deinstallation für Termux
 # Verwendung: bash uninstall_petals_worker_termux.sh [PORT]
 # Beispiel: bash uninstall_petals_worker_termux.sh 8080
 
 PORT=${1:-8080}
-echo "=== Petals Worker Deinstallation (Termux) ==="
+echo "=== llama.cpp Worker Deinstallation (Termux) ==="
 
 # Worker stoppen
-pkill -f "petals.cli.run_server.*$PORT"
+pkill -f "llama-server.*$PORT"
 sleep 2
 
-# Petals und PyTorch deinstallieren (optional)
-read -p "Petals/PyTorch deinstallieren? (y/n): " CONFIRM
-if [ "$CONFIRM" = "y" ]; then
-    pip uninstall -y petals torch
-    echo "✅ Petals und PyTorch deinstalliert"
-fi
+# Start-Skripte entfernen
+rm -f ~/start_llama-Worker-Termux-*.sh
 
-echo "✅ Petals Worker auf Port $PORT deinstalliert"
+echo "✅ Worker auf Port $PORT gestoppt"
+echo "   Hinweis: llama.cpp-Verzeichnis (~/llama.cpp) und Modelle wurden nicht entfernt."
+echo "   Zum vollständigen Entfernen: rm -rf ~/llama.cpp"
