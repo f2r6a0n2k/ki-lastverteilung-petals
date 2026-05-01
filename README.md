@@ -2,122 +2,144 @@
 
 [![Watch the video](https://img.youtube.com/vi/nH_zVxJemSU/0.jpg)](https://youtu.be/nH_zVxJemSU)
 
-Lastverteilung über mehrere Rechner: Prompts werden abwechselnd (Round-Robin) an Worker gesendet.
-Worker werden automatisch via `nmap` im lokalen Netzwerk erkannt (Ports 8080–8089).
+Intelligentes System zur Lastverteilung von KI-Inferenz über mehrere Rechner im lokalen Netzwerk. Erkennt automatisch verfügbare Worker und entscheidet dynamisch, ob Anfragen über **llama.cpp** (parallele Worker) oder **Petals** (verteilte Modell-Partitionierung) verarbeitet werden.
 
 ## Projektstruktur
 
 ```
 KI_Lastverteilung_Petals/
-├── configs/                    # Konfigurationsdateien
-│   └── models.json            # Modell-Konfiguration (anpassbar)
-├── docs/                       # Dokumentation
-│   └── lastverteilung_ki_netzwerk.md  # Hauptkonzept
-└── scripts/                    # Skripte
-    ├── install_petals_worker_linux.sh     # Linux Worker-Installation
-    ├── install_petals_worker_windows.ps1   # Windows Worker
-    ├── install_petals_worker_termux.sh     # Android (Termux) Worker
-    ├── uninstall_petals_worker_linux.sh   # Linux Deinstallation
-    ├── uninstall_petals_worker_windows.ps1 # Windows Deinstallation
-    ├── uninstall_petals_worker_termux.sh  # Termux Deinstallation
-    ├── start_worker.sh                    # Worker starten (Port wählbar)
-    ├── llama_client.py                    # Einzelne Prompts (CLI)
-    ├── chat.sh                            # Bash Chat-Interface (ohne Verlauf)
-    ├── chat_interface.py                  # Chat-Interface mit Verlauf ✅ Empfohlen
-    └── monitor.sh                         # Echtzeit-Monitoring (htop-Style)
+├── credentials.json              # SSH-Zugangsdaten (wird nicht getrackt!)
+├── scripts/
+│   ├── koordinator.py            # FastAPI-Server mit auto-detect: Petals vs llama.cpp
+│   ├── llama_client.py           # CLI-Client für einzelne Prompts
+│   ├── chat_interface.py         # Chat mit Verlauf
+│   ├── monitor.sh                # Echtzeit-Monitoring (htop-Style)
+│   ├── setup_credentials.sh      # Einmalige Einrichtung der SSH-Credentials
+│   ├── install_petals_worker_*.sh # Worker-Installer (Linux/Termux)
+│   └── uninstall_petals_worker_*.sh
 ```
 
 ## Schnellstart
 
-### 1. Worker auf allen Geräten starten
-
-Auf jedem Worker-Gerät:
-```bash
-bash scripts/start_worker.sh [PORT]
-```
-
-Oder manuell:
-```bash
-cd ~/llama.cpp && nohup ./build/bin/llama-server -m models/Llama-3.2-3B-Instruct-Q4_K_M.gguf -c 1024 --port 8080 --host 0.0.0.0 -t $(nproc) > /tmp/llama-8080.log 2>&1 &
-```
-
-### 2. Chat-Interface (empfohlen)
-
-Vollständiges Chat-Erlebnis mit Konversationsverlauf, System-Prompt und Befehlen:
-```bash
-python3 scripts/chat_interface.py
-```
-
-Befehle im Chat:
-- `/clear` – Konversation zurücksetzen
-- `/system [text]` – System-Prompt ändern
-- `/workers` – Verfügbare Worker zeigen
-- `/history` – Nachrichtenanzahl
-- `/quit` – Beenden
-
-### 3. Einzelne Prompts senden
+### 1. SSH-Credentials einrichten (einmalig)
 
 ```bash
-python3 scripts/llama_client.py "Wie ist das Wetter?"
-python3 scripts/llama_client.py "Erkläre KI" --max-tokens 50
+bash scripts/setup_credentials.sh
 ```
 
-### 4. Monitoring starten
+Erstellt `credentials.json` (wird von Git ignoriert). Alternativ manuell erstellen:
+
+```json
+{
+    "default_user": "user",
+    "default_pass": "geheim",
+    "nodes": {
+        "192.168.178.42": {"user": "admin", "pass": "anders"}
+    }
+}
+```
+
+### 2. Koordinator starten
 
 ```bash
-bash scripts/monitor.sh
+cd ~/Dokumente/KI_Lastverteilung_Petals
+~/petals-env/bin/python scripts/koordinator.py &
 ```
 
-## Verfügbare Modelle
+Der Koordinator scannt automatisch das Netzwerk und entscheidet:
+- **≥2 Nodes mit Petals + gute Latenz** → Petals-Modus (verteilte Inferenz)
+- **Sonst** → llama.cpp-Modus (parallele Worker mit Score-basierter Auswahl)
 
-| Modell | Parameter | Geräte (min) | Speicher/Gerät | Status |
-|--------|-----------|----------------|-----------------|--------|
-| Llama-3.2-3B-Instruct | 3B | 1 | ~2GB (Q4_K_M) | ✅ Standard |
-| TinyLlama-1.1B | 1.1B | 1 | ~0.7GB | ⬜ Veraltet |
+### 3. Anfragen senden
 
-## Deinstallation (Petals Worker)
-
-**Linux:**
 ```bash
-bash scripts/uninstall_petals_worker_linux.sh 8080
+# Über Koordinator (empfohlen)
+python3 scripts/llama_client.py "Wie funktioniert KI?"
+
+# Direkt via API
+curl -X POST http://192.168.178.109:5000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Was ist Petals?", "max_tokens": 128}'
 ```
 
-**Windows:**
-```powershell
-.\scripts\uninstall_petals_worker_windows.ps1 8080
-```
-
-**Android (Termux):**
-```bash
-bash scripts/uninstall_petals_worker_termux.sh 8080
-```
-
-## Monitor-Skript (htop-Style)
-
-Für eine flackerfreie Echtzeit-Anzeige (wie htop):
+### 4. Monitoring
 
 ```bash
 bash scripts/monitor.sh
 ```
 
-Das Skript scannt automatisch das lokale Netzwerk nach offenen Worker-Ports (8080-8089) und zeigt CPU-Last sowie Status jedes Workers.
+Zeigt in Echtzeit: Worker-Status, CPU/RAM pro Node, aktueller Modus (Petals/llama.cpp), Anfrage-Statistik.
 
-### Eingebettetes Video (Demo):
-[![Monitor Demo](https://img.youtube.com/vi/nH_zVxJemSU/0.jpg)](https://youtu.be/nH_zVxJemSU)
+## Architektur
 
-Oder direkt: https://youtu.be/nH_zVxJemSU
+### Modus-Erkennung
+
+Der Koordinator prüft alle 5 Sekunden automatisch:
+
+| Kriterium | Schwellwert |
+|-----------|-------------|
+| Petals installiert | Auf ≥2 Nodes |
+| Netzwerk-Latenz | < 20ms (Ping) |
+| Hardware-Ähnlichkeit | RAM-Faktor ≤ 1.5 |
+
+**Petals-Modus:** Modell-Layer werden auf Nodes partitioniert (z.B. Node A: Layer 0-11, Node B: Layer 12-23)
+
+**llama.cpp-Modus:** Jeder Worker hat ein vollständiges Modell. Auswahl nach Score:
+```
+Score = Latenz × 0.3 + CPU% × 0.4 + RAM% × 0.3
+```
+Niedrigster Score gewinnt.
+
+### Auto-Installation
+
+Wenn ≥2 Nodes mit SSH-Zugang und ≥4 GB RAM gefunden werden:
+1. `virtualenv` + `petals` automatisch installiert
+2. Petals-Server mit Layer-Partitionierung gestartet
+3. Latenz zwischen Nodes geprüft
+4. Bei Erfolg: Switch zu Petals-Modus
 
 ## Voraussetzungen
 
-- **llama.cpp Worker:** Alle Geräte im gleichen LAN
-- **Client:** Python 3.8+, `requests`, `nmap` (`sudo apt install nmap`)
-- **Monitor:** Bash, `nmap` (für Netzwerk-Scan)
+- **Python 3.8+**, `nmap` (`sudo apt install nmap`), `sshpass`
+- **SSH-Zugang** zu allen Worker-Nodes
+- **Gleiches LAN** (alle Geräte im selben Subnetz)
 
-## Hinweise
+## Sicherheit
 
-- Alle Daten bleiben lokal (keine Cloud-Abhängigkeit)
-- Worker werden automatisch via `nmap` erkannt (Ports 8080-8089)
-- Mehrere Worker im Netzwerk erhöhen die Verfügbarkeit
-- Llama-3.2-3B-Instruct ist Standardmodell (Q4_K_M, ~2GB)
-- Prompts werden abwechselnd an Worker gesendet (Round-Robin)
-- `chat_interface.py` sendet den gesamten Konversationsverlauf mit – jeder Worker hat vollen Kontext
+- **Keine hardcoded Credentials** – Passwörter in `credentials.json`
+- **`.gitignore`** schützt sensible Daten vor dem Einchecken
+- **Berechtigung `600`** für credentials.json (nur Besitzer lesbar)
+
+## Release-Änderungen
+
+### v3.0 – Intelligente Lastverteilung mit Auto-Erkennung
+
+**Neu:**
+- **Koordinator** (`koordinator.py`) mit FastAPI-Server auf Port 5000
+- **Auto-Detect** Petals vs llama.cpp basierend auf Netzwerk-Latenz, Hardware und Verfügbarkeit
+- **Auto-Installation** von Petals auf kompatiblen Nodes im Netzwerk
+- **Score-basierte Worker-Auswahl** (Latenz + CPU + RAM) statt Round-Robin
+- **Anfrage-Statistik** im Monitor: Anfragen pro Worker, Latenz, CPU/RAM
+- **Credential-System** mit `credentials.json` – keine Passwörter im Repository
+- **Monitor** zeigt aktuellen Modus (🌸 Petals / ⚙ llama.cpp) mit Begründung an
+
+**Entwicklungshintergrund:**
+Das Tool begann als einfaches Round-Robin-Setup mit zwei llama.cpp-Workern. Im Laufe der Entwicklung zeigten sich folgende Erkenntnisse:
+- Die manuelle Konfiguration von Workern war fehleranfällig → **Auto-Erkennung via nmap**
+- Round-Robin berücksichtigt nicht die aktuelle Auslastung → **Score-basierte Auswahl**
+- Für große Modelle (>16 GB) ist eine einzelne Maschine limitiert → **Petals-Integration**
+- Hardcodierte Passwörter sind ein Sicherheitsrisiko → **Credential-Datei mit .gitignore**
+- Die Anzeige der CPU-Auslastung war unlesbar (`top`-Felder) → **CPU% und RAM%**
+- Flackernder Monitor stört → **htop-Style mit Cursor-Positionierung**
+
+Das System ist nun so designed, dass es bei der Arbeit mit vielen ähnlichen Maschinen automatisch das Optimum wählt: Petals für große Modelle auf leistungsfähigen Nodes mit niedriger Latenz, llama.cpp für alles andere.
+
+### v2.0 – Petals-Integration
+- Petals-Worker-Installer für Linux, Termux, Windows
+- Netzwerk-basierte Worker-Erkennung
+- htop-Style Monitor (flackerfrei)
+
+### v1.0 – Grundlegende Lastverteilung
+- Round-Robin-Verteilung über llama.cpp-Worker
+- Einfacher Chat-Client
+- Manuelles Worker-Setup
