@@ -31,6 +31,18 @@
 
 ---
 
+## Start-Skripte (für Worker):
+
+1. **Elitebook (192.168.178.105:8080):**
+   - Datei auf Elitebook: `/home/user/start_elitebook_worker.sh`
+   - Datei im Projekt: `/home/frank/Dokumente/KI_Lastverteilung_Petals/scripts/start_elitebook_worker.sh`
+   - Ausführen auf Elitebook: `bash ~/start_elitebook_worker.sh`
+   - Oder via SSH: `ssh user@192.168.178.105 'bash ~/start_elitebook_worker.sh'`
+
+2. **Lokal (192.168.178.109:8081):**
+   - Datei lokal: `/home/frank/start_local_worker.sh`
+   - Ausführen: `bash ~/start_local_worker.sh`
+
 ## GitHub-Repositories:
 1. **ki-lastverteilung-worker** (llama.cpp Lösung – einfache Lastverteilung)  
    https://github.com/f2r6a0n2k/ki-lastverteilung-worker
@@ -40,6 +52,18 @@
    - Enthält: Installationsskripte (Linux, Windows, Android), Deinstallationsskripte, Monitor, Client, Video-Guide
 
 ---
+
+## Start-Skripte (für Worker):
+
+1. **Elitebook (192.168.178.105:8080):**
+   - Skript auf Elitebook: `/home/user/start_elitebook_worker.sh`
+   - Lokal kopiert: `/home/frank/Dokumente/KI_Lastverteilung_Petals/scripts/start_elitebook_worker.sh`
+   - Ausführen auf Elitebook: `bash ~/start_elitebook_worker.sh`
+   - Oder via SSH: `ssh user@192.168.178.105 'bash ~/start_elitebook_worker.sh'`
+
+2. **Lokal (192.168.178.109:8081):**
+   - Skript lokal: `/home/frank/start_local_worker.sh`
+   - Ausführen: `bash ~/start_local_worker.sh`
 
 ## Schnellstart (so nutzt Du das System):
 
