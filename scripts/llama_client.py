@@ -6,15 +6,28 @@ Verwendung: python3 scripts/llama_client.py "Deine Frage hier" [--max-tokens ZAH
 
 import argparse
 import json
+import os
 import sys
-import itertools
+import tempfile
 
-# Verfügbare Worker (Round-Robin)
 WORKERS = [
-    "http://192.168.178.105:8080",  # Elitebook
-    "http://192.168.178.109:8081"   # Lokal
+    "http://192.168.178.105:8080",
+    "http://192.168.178.109:8081"
 ]
-worker_cycle = itertools.cycle(WORKERS)
+STATE_FILE = os.path.join(tempfile.gettempdir(), "llama_rr_state")
+
+def get_next_worker():
+    idx = 0
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r") as f:
+                idx = int(f.read().strip())
+        except (ValueError, IOError):
+            idx = 0
+    worker = WORKERS[idx % len(WORKERS)]
+    with open(STATE_FILE, "w") as f:
+        f.write(str((idx + 1) % len(WORKERS)))
+    return worker
 
 def main():
     parser = argparse.ArgumentParser(description='llama.cpp Client für KI-Lastverteilung')
@@ -22,13 +35,13 @@ def main():
     parser.add_argument('--max-tokens', type=int, default=100, help='Maximale Anzahl Token')
     args = parser.parse_args()
 
-    worker = next(worker_cycle)
-    
+    worker = get_next_worker()
+
     print(f"=== llama.cpp Client ===")
     print(f"Worker: {worker}")
     print(f"Prompt: {args.prompt}")
     print(f"Sende Anfrage...")
-    
+
     try:
         import requests
         resp = requests.post(
@@ -38,7 +51,6 @@ def main():
         )
         result = resp.json()
         print(f"\n=== Antwort ===")
-        # Verschiedene mögliche Antwortformate behandeln
         if 'content' in result:
             print(result['content'])
         elif 'response' in result:
@@ -46,10 +58,10 @@ def main():
         else:
             print(result)
     except ImportError:
-        print("❌ requests nicht installiert. Installiere mit: pip install requests")
+        print("Fehler: requests nicht installiert. Installiere mit: pip install requests")
         sys.exit(1)
     except Exception as e:
-        print(f"❌ Fehler: {e}")
+        print(f"Fehler: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":

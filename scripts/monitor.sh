@@ -1,8 +1,6 @@
 #!/bin/bash
-# Monitor für KI-Lastverteilung - FINAL (schnell, zuverlässig)
-# Verwendung: bash /home/frank/Dokumente/KI_Lastverteilung_Petals/scripts/monitor.sh
+# Monitor für KI-Lastverteilung - HTOP-Style (flackerfrei)
 
-# Farben
 GREEN="\033[1;32m"
 RED="\033[1;31m"
 YELLOW="\033[1;33m"
@@ -10,72 +8,96 @@ BLUE="\033[1;34m"
 RESET="\033[0m"
 BOLD="\033[1m"
 
-# Aufräumen 
 cleanup() {
+    tput rmcup 2>/dev/null
     tput cnorm 2>/dev/null
     exit 0
 }
 trap cleanup INT TERM
 
-# Cursor verstecken
+tput smcup 2>/dev/null
 tput civis 2>/dev/null
 
+LOCAL_IP=$(hostname -I | awk '{print $1}')
+
+scan_network() {
+    nmap -p 8080-8089 --open -T4 192.168.178.0/24 2>/dev/null | awk '
+        /\([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\)/ {
+            match($0, /\(([0-9.]+)\)/, a)
+            ip = a[1]
+        }
+        /^[0-9]+\/tcp.*open/ {
+            split($1, p, "/")
+            print ip, p[1]
+        }
+    '
+}
+
+w() { printf "\033[2K\033[0G%b\n" "$1"; }
+
+# Initial: bekannte Worker-Liste (persistent über Session)
+declare -A known_workers
+
 while true; do
-    # Bildschirm komplett löschen (zuverlässig)
-    clear
-    
+    # Cursor nach oben, KEIN komplettes Löschen
+    printf "\033[H"
+
     # Header
-    echo -e "${BOLD}==========================================${RESET}"
-    echo -e "${BOLD}   KI-Lastverteilung Monitor${RESET}"
-    echo -e "${BOLD}   Zeit: $(date +%T)${RESET}"
-    echo -e "${BOLD}==========================================${RESET}"
-    echo ""
+    w "${BOLD}==========================================${RESET}"
+    w "${BOLD}   KI-Lastverteilung Monitor${RESET}"
+    w "${BOLD}   Zeit: $(date +%T)${RESET}"
+    w "${BOLD}==========================================${RESET}"
+    w ""
 
-    # === Elitebook Worker (105:8080) ===
-    echo -e "${BLUE}📍 Elitebook (192.168.178.105:8080)${RESET}"
-    if curl -s --connect-timeout 0.5 http://192.168.178.105:8080/health >/dev/null 2>&1; then
-        echo -e "   Status: ${GREEN}✅ AKTIV${RESET}"
-        # CPU-Last via sshpass
-        CPU_ELITE=$(sshpass -p "cornholio" ssh -o StrictHostKeyChecking=no user@192.168.178.105 "top -b -n1 2>/dev/null | grep '^%Cpu'" 2>/dev/null | head -1)
-        if [ -n "$CPU_ELITE" ]; then
-            echo -e "   ${BLUE}CPU-Last:${RESET} $CPU_ELITE"
-        else
-            echo -e "   ${YELLOW}CPU-Last: ${RED}✘ Nicht messbar${RESET}"
+    # Neue Worker finden und zur persistenten Liste hinzufügen
+    while read -r ip port; do
+        [ -z "$ip" ] && continue
+        if [ -z "${known_workers["${ip}:${port}"]}" ]; then
+            known_workers["${ip}:${port}"]=1
         fi
-    else
-        echo -e "   Status: ${RED}❌ INAKTIV${RESET}"
-        echo -e "   Start: ssh user@192.168.178.105 'bash ~/start_elitebook_worker.sh'"
-    fi
-    echo ""
+    done <<< "$(scan_network)"
 
-    # === Lokal Worker (109:8081) ===
-    echo -e "${BLUE}📍 Lokal (192.168.178.109:8081)${RESET}"
-    if curl -s --connect-timeout 0.5 http://192.168.178.109:8081/health >/dev/null 2>&1; then
-        echo -e "   Status: ${GREEN}✅ AKTIV${RESET}"
-        # CPU-Last lokal 
-        CPU_LOCAL=$(top -b -n1 2>/dev/null | grep '^%Cpu' | head -1)
-        if [ -n "$CPU_LOCAL" ]; then
-            echo -e "   ${BLUE}CPU-Last:${RESET} $CPU_LOCAL"
+    # Alle bekannten Worker anzeigen (auch wenn jetzt offline)
+    if [ ${#known_workers[@]} -eq 0 ]; then
+        w "${YELLOW}Keine Worker gefunden – Scan läuft...${RESET}"
+    fi
+
+    for key in "${!known_workers[@]}"; do
+        IFS=':' read -r ip port <<< "$key"
+
+        if curl -s --connect-timeout 0.5 "http://${ip}:${port}/health" >/dev/null 2>&1; then
+            if [ "$ip" = "$LOCAL_IP" ] || [ "$ip" = "127.0.0.1" ]; then
+                CPU=$(top -b -n1 2>/dev/null | grep '^%Cpu')
+            else
+                CPU=$(sshpass -p "cornholio" ssh -o StrictHostKeyChecking=no user@"${ip}" "top -b -n1 2>/dev/null | grep '^%Cpu'" 2>/dev/null)
+            fi
+
+            w "${BLUE}📍 ${ip}:${port}${RESET}"
+            w "   Status: ${GREEN}✅ AKTIV${RESET}"
+            if [ -n "$CPU" ]; then
+                w "   ${BLUE}CPU-Last:${RESET} $CPU"
+            else
+                w "   ${YELLOW}CPU-Last: ${RED}✘ Nicht messbar${RESET}"
+            fi
         else
-            echo -e "   ${YELLOW}CPU-Last: ${RED}✘ Nicht messbar${RESET}"
+            w "${BLUE}📍 ${ip}:${port}${RESET}"
+            w "   Status: ${RED}❌ INAKTIV${RESET}"
         fi
-    else
-        echo -e "   Status: ${RED}❌ INAKTIV${RESET}"
-        echo -e "   Start: bash ~/start_local_worker.sh"
-    fi
-    echo ""
+        w ""
+    done
 
-    # === Koordinator ===
-    echo -e "${BLUE}📊 Koordinator (Round-Robin)${RESET}"
+    # Koordinator
+    w "${BLUE}📊 Koordinator (Round-Robin)${RESET}"
     if ps aux 2>/dev/null | grep -q "[u]vicorn koordinator"; then
-        echo -e "   Status: ${GREEN}✅ AKTIV (http://192.168.178.109:5000)${RESET}"
+        w "   Status: ${GREEN}✅ AKTIV${RESET}"
     else
-        echo -e "   Status: ${RED}❌ INAKTIV${RESET}"
+        w "   Status: ${RED}❌ INAKTIV${RESET}"
     fi
-    echo ""
+    w ""
+    w "${YELLOW}Drücke Ctrl+C zum Beenden${RESET}"
 
-    echo -e "${YELLOW}Drücke Ctrl+C zum Beenden${RESET}"
-    
-    # Kurze Pause (nur für CPU-Entlastung)
-    sleep 0.3
+    # Restliche Zeilen leeren
+    printf "\033[J"
+
+    sleep 2
 done

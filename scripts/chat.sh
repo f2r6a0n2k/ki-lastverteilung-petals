@@ -13,6 +13,10 @@ RESET="\033[0m"
 BOLD="\033[1m"
 DIM="\033[2m"
 
+# Worker (Round-Robin)
+WORKERS=("http://192.168.178.105:8080" "http://192.168.178.109:8081")
+WORKER_INDEX=0
+
 # Aufräumen
 cleanup() {
     tput cnorm 2>/dev/null
@@ -28,7 +32,7 @@ tput civis 2>/dev/null
 clear
 echo -e "${BOLD}==========================================${RESET}"
 echo -e "${BOLD}   KI-Lastverteilung Chat-Interface${RESET}"
-echo -e "${DIM}   (wie OpenCode - Round-Robin Worker)${RESET}"
+echo -e "${DIM}   (Round-Robin Lastverteilung)${RESET}"
 echo -e "${BOLD}==========================================${RESET}"
 echo ""
 echo -e "${BLUE}Verfügbare Worker:${RESET}"
@@ -56,30 +60,39 @@ while true; do
         continue
     fi
 
-    echo ""
-    echo -e "${CYAN}Sende an Worker...${RESET}"
+    # Round-Robin Worker auswählen
+    CURRENT_WORKER="${WORKERS[$WORKER_INDEX]}"
+    WORKER_INDEX=$(( (WORKER_INDEX + 1) % ${#WORKERS[@]} ))
 
-    # Sende an llama_client.py (Round-Robin)
-    RESULT=$(python3 /home/frank/Dokumente/KI_Lastverteilung_Petals/scripts/llama_client.py "$USER_PROMPT" 2>&1)
+    echo ""
+    echo -e "${CYAN}Sende an ${CURRENT_WORKER}...${RESET}"
+
+    # Direkt an Worker senden
+    RESPONSE=$(curl -s --max-time 60 -X POST "${CURRENT_WORKER}/completion" \
+        -H "Content-Type: application/json" \
+        -d "{\"prompt\": \"${USER_PROMPT}\", \"max_tokens\": 100}" 2>&1)
 
     # Fehler?
-    if [[ $? -ne 0 ]]; then
+    if [[ $? -ne 0 || -z "$RESPONSE" ]]; then
         echo -e "${RED}Fehler beim Senden!${RESET}"
-        echo "$RESULT"
+        echo -e "${DIM}Worker: ${CURRENT_WORKER}${RESET}"
         continue
     fi
 
-    # Worker extrahieren (falls in Ausgabe)
-    WORKER=$(echo "$RESULT" | grep -o 'http://[^ ]*' | head -1)
-    if [[ -z "$WORKER" ]]; then
-        WORKER="Unbekannt"
+    # Antwort extrahieren
+    CONTENT=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('content','') or d.get('response','No response'))" 2>/dev/null)
+
+    if [[ -z "$CONTENT" ]]; then
+        echo -e "${RED}Keine gültige Antwort erhalten.${RESET}"
+        echo -e "${DIM}Raw: ${RESPONSE:0:100}...${RESET}"
+        continue
     fi
 
     # Antwort anzeigen
     echo ""
-    echo -e "${GREEN}Antwort von: $WORKER${RESET}"
+    echo -e "${GREEN}Antwort von: ${CURRENT_WORKER}${RESET}"
     echo -e "${DIM}----------------------------------------${RESET}"
-    echo "$RESULT" | grep -v '=== llama.cpp Client ===' | grep -v 'Worker:' | grep -v 'Prompt:' | grep -v 'Sende Anfrage...'
+    echo "$CONTENT"
     echo -e "${DIM}----------------------------------------${RESET}"
     echo ""
 done
