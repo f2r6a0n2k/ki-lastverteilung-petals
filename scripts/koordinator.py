@@ -28,8 +28,10 @@ from pydantic import BaseModel
 STATS_FILE = Path("/tmp/llama_stats.json")
 MODE_FILE = Path("/tmp/llama_mode.json")
 INSTALL_LOCK = Path("/tmp/llama_install.lock")
-CONFIG_FILE = Path("/home/frank/Dokumente/KI_Lastverteilung_Petals/scripts/nodes.json")
-SCRIPT_DIR = Path("/home/frank/Dokumente/KI_Lastverteilung_Petals/scripts")
+SCRIPT_DIR = Path(__file__).parent.resolve()
+PROJECT_DIR = SCRIPT_DIR.parent
+CREDENTIALS_FILE = PROJECT_DIR / "credentials.json"
+CONFIG_FILE = SCRIPT_DIR / "nodes.json"
 
 LOCAL_IP = subprocess.check_output(["hostname", "-I"], text=True).strip().split()[0]
 LOCAL_SUBNET = ".".join(LOCAL_IP.split(".")[:3])
@@ -51,24 +53,37 @@ MODEL_NAME = "bigscience/bloom-560m"
 
 
 def load_config():
-    try:
-        if CONFIG_FILE.exists():
-            with open(CONFIG_FILE) as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {
+    config = {
         "default_user": "user",
-        "default_pass": "cornholio",
+        "default_pass": "",
         "nodes": {}
     }
+    
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE) as f:
+                config["nodes"] = json.load(f).get("nodes", {})
+        except Exception:
+            pass
+            
+    if CREDENTIALS_FILE.exists():
+        try:
+            with open(CREDENTIALS_FILE) as f:
+                creds = json.load(f)
+                config["default_user"] = creds.get("default_user", config["default_user"])
+                config["default_pass"] = creds.get("default_pass", config["default_pass"])
+                config["nodes"].update(creds.get("nodes", {}))
+        except Exception:
+            print(f"WARNING: Could not load {CREDENTIALS_FILE}. SSH access will fail.")
+            
+    return config
 
 
 def get_creds(ip):
     config = load_config()
     node_creds = config.get("nodes", {}).get(ip, {})
     return node_creds.get("user", config.get("default_user", "user")), \
-           node_creds.get("pass", config.get("default_pass", "cornholio"))
+           node_creds.get("pass", config.get("default_pass", ""))
 
 
 def ssh_exec(ip, cmd, timeout=30):

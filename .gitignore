@@ -1,0 +1,18 @@
+# Credentials & config
+credentials.json
+.env
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.env
+petals-env/
+
+# Temporary files
+/tmp/
+*.tmp
+*.log

@@ -16,6 +16,33 @@ tput civis 2>/dev/null
 LOCAL_IP=$(hostname -I | awk '{print $1}')
 LOCAL_SUBNET=$(echo "$LOCAL_IP" | cut -d. -f1-3)
 
+# Credentials laden (aus credentials.json oder nodes.json)
+PROJECT_DIR=$(cd "$(dirname "$0")/.." && pwd)
+CREDS_FILE="$PROJECT_DIR/credentials.json"
+NODES_FILE="$PROJECT_DIR/scripts/nodes.json"
+
+get_pass() {
+    local ip=$1
+    local def_pass=""
+    local def_user="user"
+    local node_pass=""
+    local node_user=""
+    
+    # Default aus credentials.json
+    if [ -f "$CREDS_FILE" ]; then
+        def_pass=$(python3 -c "import json; print(json.load(open('$CREDS_FILE')).get('default_pass',''))" 2>/dev/null)
+        def_user=$(python3 -c "import json; print(json.load(open('$CREDS_FILE')).get('default_user','user'))" 2>/dev/null)
+    fi
+    
+    # Node-spezifisch aus nodes.json
+    if [ -f "$NODES_FILE" ]; then
+        node_user=$(python3 -c "import json; d=json.load(open('$NODES_FILE')); print(d.get('nodes',{}).get('$ip',{}).get('user',''))" 2>/dev/null)
+        node_pass=$(python3 -c "import json; d=json.load(open('$NODES_FILE')); print(d.get('nodes',{}).get('$ip',{}).get('pass',''))" 2>/dev/null)
+    fi
+    
+    echo "${node_pass:-$def_pass}"
+}
+
 scan_network() {
     nmap -p 8080-8089 --open -T4 "${LOCAL_SUBNET}.0/24" 2>/dev/null | awk '
         /\([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\)/ { match($0,/\(([0-9.]+)\)/,a); ip=a[1] }
@@ -76,7 +103,7 @@ while true; do
                 read -r cpu ram <<< "$(local_stats)"
                 w "   ${BLUE}CPU:${RESET} ${cpu}%  ${BLUE}RAM:${RESET} ${ram}%"
             else
-                stats=$(timeout 3 sshpass -p "cornholio" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=1 "user@${ip}" \
+                stats=$(timeout 3 sshpass -p "$(get_pass "${ip}")" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=1 "user@${ip}" \
                     "idle=\$(top -b -n1 2>/dev/null | grep '^%Cpu' | grep -oP '[0-9,]+(?=\s*id)' | tr ',' '.'); idle=\${idle:-100}; idle=\${idle%%.*}; cpu=\$((100-idle)); [ \$cpu -lt 0 ] && cpu=0; ram=\$(free | awk '/^Mem:/{printf \"%.0f\",\$3/\$2*100}'); echo \"\$cpu \$ram\"")
                 if [ -n "$stats" ]; then
                     read -r cpu ram <<< "$stats"
