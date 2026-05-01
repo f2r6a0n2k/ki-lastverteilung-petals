@@ -1,0 +1,29 @@
+{
+  "models": [
+    {
+      "name": "TinyLlama-1.1B",
+      "id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+      "description": "Kleines Modell, für schwache Hardware (1.1B Parameter)",
+      "min_devices": 1,
+      "memory_per_device": "0.7GB",
+      "petals_support": true
+    },
+    {
+      "name": "Llama-2-7B",
+      "id": "meta-llama/Llama-2-7b-chat-hf",
+      "description": "Mittleres Modell, für mehrere Worker verteilt (7B Parameter)",
+      "min_devices": 2,
+      "memory_per_device": "3.5GB",
+      "petals_support": true
+    },
+    {
+      "name": "Llama-2-13B",
+      "id": "meta-llama/Llama-2-13b-chat-hf",
+      "description": "Großes Modell, für leistungsstarke Worker-Verbünde (13B Parameter)",
+      "min_devices": 4,
+      "memory_per_device": "3.5GB",
+      "petals_support": true
+    }
+  ],
+  "default_model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+}
