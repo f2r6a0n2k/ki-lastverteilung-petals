@@ -19,10 +19,11 @@
    - **Verwendung:** `python3 scripts/llama_client.py "Deine Frage" [--max-tokens ZAHL]`
    - **Hinweis:** Worker werden automatisch via `nmap` erkannt und im Round-Robin verteilt!
 
-4. **Chat-Interface** (interaktiv)
-   - **Datei:** `scripts/chat.sh`
-   - **Start:** `bash scripts/chat.sh`
-   - **Features:** Runde für Runde Eingabe, Worker-Wechsel automatisch
+4. **Chat-Interface** (empfohlen – wie OpenCode)
+   - **Datei:** `scripts/chat_interface.py`
+   - **Start:** `python3 scripts/chat_interface.py`
+   - **Features:** Konversationsverlauf, System-Prompt, Befehle (/clear, /system, /workers, /history)
+   - **Vorteil:** Jeder Worker erhält den vollen Kontext der Unterhaltung
 
 ---
 
@@ -103,8 +104,9 @@ KI_Lastverteilung_Petals/
     ├── uninstall_petals_worker_windows.ps1 # Windows Deinstallation
     ├── start_worker.sh                   # Worker starten (Port wählbar)
     ├── monitor.sh                        # htop-Style Monitor ✅
-    ├── llama_client.py                   # Round-Robin Client ✅
-    └── chat.sh                           # Interaktives Chat-Interface ✅
+    ├── llama_client.py                   # Einzelne Prompts (CLI)
+    ├── chat.sh                           # Bash Chat (ohne Verlauf)
+    └── chat_interface.py                 # Chat-Interface mit Verlauf ✅ Empfohlen
 ```
 
 ✅ **System ist einsatzbereit!** Starte Worker und nutze die automatische Erkennung.

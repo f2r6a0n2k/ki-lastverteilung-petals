@@ -21,8 +21,9 @@ KI_Lastverteilung_Petals/
     ├── uninstall_petals_worker_windows.ps1 # Windows Deinstallation
     ├── uninstall_petals_worker_termux.sh  # Termux Deinstallation
     ├── start_worker.sh                    # Worker starten (Port wählbar)
-    ├── llama_client.py                    # Round-Robin Client
-    ├── chat.sh                            # Chat-Interface
+    ├── llama_client.py                    # Einzelne Prompts (CLI)
+    ├── chat.sh                            # Bash Chat-Interface (ohne Verlauf)
+    ├── chat_interface.py                  # Chat-Interface mit Verlauf ✅ Empfohlen
     └── monitor.sh                         # Echtzeit-Monitoring (htop-Style)
 ```
 
@@ -33,8 +34,6 @@ KI_Lastverteilung_Petals/
 Auf jedem Worker-Gerät:
 ```bash
 bash scripts/start_worker.sh [PORT]
-# Beispiel:
-bash scripts/start_worker.sh 8080
 ```
 
 Oder manuell:
@@ -42,18 +41,25 @@ Oder manuell:
 cd ~/llama.cpp && nohup ./build/bin/llama-server -m models/Llama-3.2-3B-Instruct-Q4_K_M.gguf -c 1024 --port 8080 --host 0.0.0.0 -t $(nproc) > /tmp/llama-8080.log 2>&1 &
 ```
 
-### 2. Client nutzen (Prompt senden)
+### 2. Chat-Interface (empfohlen)
 
-Worker werden automatisch erkannt:
+Vollständiges Chat-Erlebnis mit Konversationsverlauf, System-Prompt und Befehlen:
+```bash
+python3 scripts/chat_interface.py
+```
+
+Befehle im Chat:
+- `/clear` – Konversation zurücksetzen
+- `/system [text]` – System-Prompt ändern
+- `/workers` – Verfügbare Worker zeigen
+- `/history` – Nachrichtenanzahl
+- `/quit` – Beenden
+
+### 3. Einzelne Prompts senden
+
 ```bash
 python3 scripts/llama_client.py "Wie ist das Wetter?"
 python3 scripts/llama_client.py "Erkläre KI" --max-tokens 50
-```
-
-### 3. Chat-Interface (interaktiv)
-
-```bash
-bash scripts/chat.sh
 ```
 
 ### 4. Monitoring starten
@@ -114,3 +120,4 @@ Oder direkt: https://youtu.be/nH_zVxJemSU
 - Mehrere Worker im Netzwerk erhöhen die Verfügbarkeit
 - Llama-3.2-3B-Instruct ist Standardmodell (Q4_K_M, ~2GB)
 - Prompts werden abwechselnd an Worker gesendet (Round-Robin)
+- `chat_interface.py` sendet den gesamten Konversationsverlauf mit – jeder Worker hat vollen Kontext
