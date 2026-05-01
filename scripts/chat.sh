@@ -1,9 +1,6 @@
 #!/bin/bash
 # Chat-Interface für KI-Lastverteilung (Round-Robin)
-# Verwendung: bash scripts/chat.sh
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CONFIG_FILE="${SCRIPT_DIR}/../configs/workers.json"
+# Worker werden automatisch via nmap im lokalen Netzwerk erkannt
 
 # Farben
 GREEN="\033[1;32m"
@@ -16,21 +13,38 @@ RESET="\033[0m"
 BOLD="\033[1m"
 DIM="\033[2m"
 
-# Worker aus Konfiguration laden
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo -e "${RED}Konfigurationsdatei nicht gefunden: ${CONFIG_FILE}${RESET}"
-    exit 1
-fi
+# Lokales Subnetz ermitteln
+LOCAL_IP=$(hostname -I | awk '{print $1}')
+LOCAL_SUBNET=$(echo "$LOCAL_IP" | cut -d. -f1-3)
 
-mapfile -t WORKERS < <(python3 -c "import json; [print(w['url']) for w in json.load(open('${CONFIG_FILE}'))['workers']]")
-mapfile -t NAMES < <(python3 -c "import json; [print(w.get('name', 'Worker')) for w in json.load(open('${CONFIG_FILE}'))['workers']]")
+# Worker via nmap scannen
+echo -e "${CYAN}Suche Worker im Netzwerk...${RESET}"
+mapfile -t WORKERS < <(nmap -p 8080-8089 --open -T4 "${LOCAL_SUBNET}.0/24" 2>/dev/null | awk '
+    /\([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\)/ {
+        match($0, /\(([0-9.]+)\)/, a)
+        ip = a[1]
+    }
+    /^[0-9]+\/tcp.*open/ {
+        split($1, p, "/")
+        print ip ":" p[1]
+    }
+' | sort -u)
 
 if [ ${#WORKERS[@]} -eq 0 ]; then
-    echo -e "${RED}Keine Worker in der Konfiguration gefunden.${RESET}"
+    echo -e "${RED}Keine Worker gefunden. Bitte stelle sicher, dass mindestens ein llama-server läuft (Port 8080-8089).${RESET}"
     exit 1
 fi
 
+echo -e "${GREEN}${#WORKERS[@]} Worker gefunden:${RESET}"
+for i in "${!WORKERS[@]}"; do
+    echo -e "   • Worker $((i+1)): ${WORKERS[$i]}"
+done
+echo ""
+
 WORKER_INDEX=0
+
+# Cursor verstecken
+tput civis 2>/dev/null
 
 # Aufräumen
 cleanup() {
@@ -40,9 +54,6 @@ cleanup() {
 }
 trap cleanup INT TERM
 
-# Cursor verstecken
-tput civis 2>/dev/null
-
 # Start-Screen
 clear
 echo -e "${BOLD}==========================================${RESET}"
@@ -50,9 +61,9 @@ echo -e "${BOLD}   KI-Lastverteilung Chat-Interface${RESET}"
 echo -e "${DIM}   (Round-Robin Lastverteilung)${RESET}"
 echo -e "${BOLD}==========================================${RESET}"
 echo ""
-echo -e "${BLUE}Verfugbare Worker:${RESET}"
+echo -e "${BLUE}Gefundene Worker:${RESET}"
 for i in "${!WORKERS[@]}"; do
-    echo -e "   • ${NAMES[$i]} (${WORKERS[$i]})"
+    echo -e "   • Worker $((i+1)): ${WORKERS[$i]}"
 done
 echo ""
 echo -e "${YELLOW}Tipp: 'quit' oder 'exit' zum Beenden${RESET}"
@@ -77,12 +88,11 @@ while true; do
     fi
 
     # Round-Robin Worker auswählen
-    CURRENT_WORKER="${WORKERS[$WORKER_INDEX]}"
-    CURRENT_NAME="${NAMES[$WORKER_INDEX]}"
+    CURRENT_WORKER="http://${WORKERS[$WORKER_INDEX]}"
     WORKER_INDEX=$(( (WORKER_INDEX + 1) % ${#WORKERS[@]} ))
 
     echo ""
-    echo -e "${CYAN}Sende an ${CURRENT_NAME}...${RESET}"
+    echo -e "${CYAN}Sende an ${CURRENT_WORKER}...${RESET}"
 
     # Direkt an Worker senden
     RESPONSE=$(curl -s --max-time 60 -X POST "${CURRENT_WORKER}/completion" \
@@ -100,14 +110,14 @@ while true; do
     CONTENT=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('content','') or d.get('response','No response'))" 2>/dev/null)
 
     if [[ -z "$CONTENT" ]]; then
-        echo -e "${RED}Keine gultige Antwort erhalten.${RESET}"
+        echo -e "${RED}Keine gültige Antwort erhalten.${RESET}"
         echo -e "${DIM}Raw: ${RESPONSE:0:100}...${RESET}"
         continue
     fi
 
     # Antwort anzeigen
     echo ""
-    echo -e "${GREEN}Antwort von: ${CURRENT_NAME} (${CURRENT_WORKER})${RESET}"
+    echo -e "${GREEN}Antwort von: ${CURRENT_WORKER}${RESET}"
     echo -e "${DIM}----------------------------------------${RESET}"
     echo "$CONTENT"
     echo -e "${DIM}----------------------------------------${RESET}"

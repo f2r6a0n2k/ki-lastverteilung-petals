@@ -3,18 +3,18 @@
 [![Watch the video](https://img.youtube.com/vi/nH_zVxJemSU/0.jpg)](https://youtu.be/nH_zVxJemSU)
 
 Lastverteilung über mehrere Rechner: Prompts werden abwechselnd (Round-Robin) an Worker gesendet.
+Worker werden automatisch via `nmap` im lokalen Netzwerk erkannt (Ports 8080–8089).
 
 ## Projektstruktur
 
 ```
 KI_Lastverteilung_Petals/
 ├── configs/                    # Konfigurationsdateien
-│   ├── models.json            # Modell-Konfiguration (anpassbar)
-│   └── workers.json           # Worker-URLs (anpassbar)
+│   └── models.json            # Modell-Konfiguration (anpassbar)
 ├── docs/                       # Dokumentation
 │   └── lastverteilung_ki_netzwerk.md  # Hauptkonzept
-└── scripts/                    # Installations- und Hilfsskripte
-    ├── install_petals_worker_linux.sh     # Linux Worker
+└── scripts/                    # Skripte
+    ├── install_petals_worker_linux.sh     # Linux Worker-Installation
     ├── install_petals_worker_windows.ps1   # Windows Worker
     ├── install_petals_worker_termux.sh     # Android (Termux) Worker
     ├── uninstall_petals_worker_linux.sh   # Linux Deinstallation
@@ -28,23 +28,12 @@ KI_Lastverteilung_Petals/
 
 ## Schnellstart
 
-### 1. Worker konfigurieren
-
-Bearbeite `configs/workers.json` und trage deine Worker ein:
-
-```json
-{
-  "workers": [
-    {"url": "http://192.168.1.100:8080", "name": "Worker 1"},
-    {"url": "http://192.168.1.101:8080", "name": "Worker 2"}
-  ]
-}
-```
-
-### 2. Worker auf allen Geräten starten
+### 1. Worker auf allen Geräten starten
 
 Auf jedem Worker-Gerät:
 ```bash
+bash scripts/start_worker.sh [PORT]
+# Beispiel:
 bash scripts/start_worker.sh 8080
 ```
 
@@ -53,20 +42,21 @@ Oder manuell:
 cd ~/llama.cpp && nohup ./build/bin/llama-server -m models/Llama-3.2-3B-Instruct-Q4_K_M.gguf -c 1024 --port 8080 --host 0.0.0.0 -t $(nproc) > /tmp/llama-8080.log 2>&1 &
 ```
 
-### 3. Client nutzen (Prompt senden)
+### 2. Client nutzen (Prompt senden)
 
+Worker werden automatisch erkannt:
 ```bash
 python3 scripts/llama_client.py "Wie ist das Wetter?"
 python3 scripts/llama_client.py "Erkläre KI" --max-tokens 50
 ```
 
-### 4. Chat-Interface (interaktiv)
+### 3. Chat-Interface (interaktiv)
 
 ```bash
 bash scripts/chat.sh
 ```
 
-### 5. Monitoring starten
+### 4. Monitoring starten
 
 ```bash
 bash scripts/monitor.sh
@@ -114,13 +104,13 @@ Oder direkt: https://youtu.be/nH_zVxJemSU
 ## Voraussetzungen
 
 - **llama.cpp Worker:** Alle Geräte im gleichen LAN
-- **Client:** Python 3.8+, `requests` Library (`pip install requests`)
+- **Client:** Python 3.8+, `requests`, `nmap` (`sudo apt install nmap`)
 - **Monitor:** Bash, `nmap` (für Netzwerk-Scan)
 
 ## Hinweise
 
 - Alle Daten bleiben lokal (keine Cloud-Abhängigkeit)
-- Worker werden über `configs/workers.json` konfiguriert
+- Worker werden automatisch via `nmap` erkannt (Ports 8080-8089)
 - Mehrere Worker im Netzwerk erhöhen die Verfügbarkeit
 - Llama-3.2-3B-Instruct ist Standardmodell (Q4_K_M, ~2GB)
 - Prompts werden abwechselnd an Worker gesendet (Round-Robin)

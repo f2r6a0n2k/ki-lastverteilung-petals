@@ -4,7 +4,7 @@
 
 ### ✅ FUNKTIONIERT (einsatzbereit):
 1. **llama.cpp Worker** (Round-Robin Lastverteilung)
-   - **Worker:** Konfigurierbar über `configs/workers.json`
+   - **Worker:** Automatisch erkannt via `nmap` (Ports 8080-8089)
    - **Modell:** Llama-3.2-3B-Instruct (Q4_K_M, ~2 GB)
    - **System:** Ganze Prompts werden abwechselnd an Worker gesendet
 
@@ -17,7 +17,7 @@
 3. **Client** (Round-Robin)
    - **Datei:** `scripts/llama_client.py`
    - **Verwendung:** `python3 scripts/llama_client.py "Deine Frage" [--max-tokens ZAHL]`
-   - **Hinweis:** Worker werden aus `configs/workers.json` gelesen und automatisch im Round-Robin verteilt!
+   - **Hinweis:** Worker werden automatisch via `nmap` erkannt und im Round-Robin verteilt!
 
 4. **Chat-Interface** (interaktiv)
    - **Datei:** `scripts/chat.sh`
@@ -50,46 +50,35 @@ cd ~/llama.cpp && nohup ./build/bin/llama-server -m models/Llama-3.2-3B-Instruct
 
 ## Schnellstart (so nutzt Du das System):
 
-### 1. Worker konfigurieren
-
-Bearbeite `configs/workers.json` und trage alle Worker ein:
-```json
-{
-  "workers": [
-    {"url": "http://192.168.1.100:8080", "name": "Server 1"},
-    {"url": "http://192.168.1.101:8080", "name": "Server 2"}
-  ]
-}
-```
-
-### 2. Worker starten (auf jedem Gerät)
+### 1. Worker starten (auf jedem Gerät)
 
 ```bash
 bash scripts/start_worker.sh 8080
 ```
 
-### 3. Monitor starten (htop-Style):
+### 2. Monitor starten (htop-Style):
 ```bash
 bash scripts/monitor.sh
 ```
 - Mit `Ctrl+C` beenden (stellt Bildschirm wieder her)
 
-### 4. Prompt senden (Lastverteilung testen):
+### 3. Prompt senden (Lastverteilung testen):
 ```bash
 python3 scripts/llama_client.py "Wie ist das Wetter?"
 python3 scripts/llama_client.py "Erkläre KI" --max-tokens 50
 ```
-→ Prompts werden automatisch abwechselnd an alle konfigurierten Worker gesendet!
+→ Worker werden automatisch via `nmap` erkannt! Prompts werden abwechselnd verteilt.
 
 ---
 
 ## WICHTIGE Hinweise:
 
-1. **Worker konfigurieren:** Alle Worker-URLs werden in `configs/workers.json` eingetragen. Keine festen IPs im Code!
-2. **pip-Problem auf Ubuntu 24.04:** Falls `pip install` mit `externally-managed-environment` fehlschlägt:
+1. **Automatische Worker-Erkennung:** Keine Konfiguration nötig – Worker werden via `nmap` im lokalen Netzwerk erkannt (Ports 8080-8089).
+2. **Voraussetzung:** `nmap` muss installiert sein (`sudo apt install nmap`).
+3. **pip-Problem auf Ubuntu 24.04:** Falls `pip install` mit `externally-managed-environment` fehlschlägt:
    - Installiere `pipx`: `sudo apt install pipx`
    - Oder verwende `--break-system-packages`: `python3 -m pip install --break-system-packages PAKET`
-3. **Monitor zeigt alte Daten:** Falls der Monitor nicht aktualisiert, schließe ihn mit `Ctrl+C` und starte ihn neu.
+4. **Monitor zeigt alte Daten:** Falls der Monitor nicht aktualisiert, schließe ihn mit `Ctrl+C` und starte ihn neu.
 
 ---
 
@@ -102,8 +91,7 @@ python3 scripts/llama_client.py "Erkläre KI" --max-tokens 50
 ```
 KI_Lastverteilung_Petals/
 ├── configs/              # Konfigurationsdateien
-│   ├── models.json       # Modell-Konfiguration
-│   └── workers.json      # Worker-URLs (hier anpassen!)
+│   └── models.json       # Modell-Konfiguration
 ├── docs/                 # Dokumentation
 │   └── lastverteilung_ki_netzwerk.md  # Hauptkonzept
 └── scripts/               # Skripte
@@ -119,4 +107,4 @@ KI_Lastverteilung_Petals/
     └── chat.sh                           # Interaktives Chat-Interface ✅
 ```
 
-✅ **System ist einsatzbereit!** Konfiguriere deine Worker in `configs/workers.json` und starte den Monitor.
+✅ **System ist einsatzbereit!** Starte Worker und nutze die automatische Erkennung.

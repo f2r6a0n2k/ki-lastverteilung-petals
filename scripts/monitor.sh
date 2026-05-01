@@ -39,6 +39,9 @@ w() { printf "\033[2K\033[0G%b\n" "$1"; }
 # Initial: bekannte Worker-Liste (persistent über Session)
 declare -A known_workers
 
+# Remote-Befehl für CPU% und RAM%
+STATS_CMD='CPU=$(top -b -n1 | awk "/^%Cpu/ {gsub(/,/,\".\"); printf \"%.0f\", 100-\$8}"); MEM=$(free | awk "/^Mem:/ {printf \"%.0f\", \$3/\$2*100}"); echo "CPU: ${CPU}%  RAM: ${MEM}%"'
+
 while true; do
     # Cursor nach oben, KEIN komplettes Löschen
     printf "\033[H"
@@ -68,17 +71,17 @@ while true; do
 
         if curl -s --connect-timeout 0.5 "http://${ip}:${port}/health" >/dev/null 2>&1; then
             if [ "$ip" = "$LOCAL_IP" ] || [ "$ip" = "127.0.0.1" ]; then
-                CPU=$(top -b -n1 2>/dev/null | grep '^%Cpu')
+                STATS=$(eval "$STATS_CMD")
             else
-                CPU=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=1 "${ip}" "top -b -n1 2>/dev/null | grep '^%Cpu'" 2>/dev/null)
+                STATS=$(sshpass -p "cornholio" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=1 "user@${ip}" "$STATS_CMD" 2>/dev/null)
             fi
 
             w "${BLUE}📍 ${ip}:${port}${RESET}"
             w "   Status: ${GREEN}✅ AKTIV${RESET}"
-            if [ -n "$CPU" ]; then
-                w "   ${BLUE}CPU-Last:${RESET} $CPU"
+            if [ -n "$STATS" ]; then
+                w "   ${BLUE}CPU:${RESET} $(echo "$STATS" | grep -oP 'CPU: \K[^ ]+')  ${BLUE}RAM:${RESET} $(echo "$STATS" | grep -oP 'RAM: \K[^ ]+')"
             else
-                w "   ${YELLOW}CPU-Last: ${RED}✘ Nicht messbar${RESET}"
+                w "   ${YELLOW}CPU: ${RED}✘ Nicht messbar${RESET}"
             fi
         else
             w "${BLUE}📍 ${ip}:${port}${RESET}"
