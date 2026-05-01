@@ -114,6 +114,21 @@ bash scripts/uninstall_petals_worker_termux.sh 8080
 4. Lass dir ein Skript mit Zeitstempeln generieren
 5. Nutze die Audio-Option für Voiceover
 
+## Monitor-Skript (htop-Style)
+
+Für eine flackerfreie Echtzeit-Anzeige (wie htop):
+
+```bash
+bash scripts/monitor.sh
+```
+
+Das Skript nutzt den alternativen Bildschirm-Puffer – **kein Flackern**, Cursor versteckt, reagiert sofort auf `Ctrl+C` (stellt den Originalbildschirm wieder her).
+
+### Eingebettetes Video (Demo):
+[![Monitor Demo](https://img.youtube.com/vi/nH_zVxJemSU/0.jpg)](https://youtu.be/nH_zVxJemSU)
+
+Oder direkt: https://youtu.be/nH_zVxJemSU
+
 ## Voraussetzungen
 
 - **Alle Geräte:** Python 3.8+, pip
