@@ -3,12 +3,12 @@
 Koordinator für KI-Lastverteilung mit auto-detect: Petals vs llama.cpp
 FastAPI + uvicorn, startet auf Port 5000
 
-Erkennungslogik:
-  Petals-Modus aktiv wenn:
-    1. Petals auf >=2 Nodes installiert (petals-server auf Port 8080-8089)
-    2. Latenz zwischen Nodes < 20ms
-    3. Mindestens 2 Worker mit ähnlicher Hardware (RAM ±50%)
-  Sonst: llama.cpp-Modus (parallele Worker)
+Auto-Installationslogik:
+  1. Scannt Netzwerk nach erreichbaren Nodes (SSH + HTTP-Ports)
+  2. Installiert Petals automatisch auf Nodes mit SSH-Zugang
+  3. Startet Petals-Server mit Layer-Partitionierung
+  4. Prüft: >=2 Nodes, Latenz <20ms, RAM ähnlich
+  5. Wenn erfüllt -> Petals-Modus, sonst -> llama.cpp-Fallback
 """
 
 import json
@@ -27,98 +27,170 @@ from pydantic import BaseModel
 
 STATS_FILE = Path("/tmp/llama_stats.json")
 MODE_FILE = Path("/tmp/llama_mode.json")
+INSTALL_LOCK = Path("/tmp/llama_install.lock")
+CONFIG_FILE = Path("/home/frank/Dokumente/KI_Lastverteilung_Petals/scripts/nodes.json")
+SCRIPT_DIR = Path("/home/frank/Dokumente/KI_Lastverteilung_Petals/scripts")
+
 LOCAL_IP = subprocess.check_output(["hostname", "-I"], text=True).strip().split()[0]
 LOCAL_SUBNET = ".".join(LOCAL_IP.split(".")[:3])
-SSH_PASS = "cornholio"
 
 app = FastAPI(title="KI-Lastverteilung Koordinator")
 
 state = {
     "session_start": datetime.now().isoformat(),
     "mode": "llama.cpp",
-    "mode_reason": "Petals-Voraussetzungen nicht erfüllt",
+    "mode_reason": "Prüfung läuft...",
     "workers": {},
     "petals_nodes": [],
     "total_requests": 0,
+    "install_status": {},
 }
 state_lock = threading.Lock()
 
-
-def load_stats():
-    global state
-    if STATS_FILE.exists():
-        try:
-            with open(STATS_FILE) as f:
-                state = json.load(f)
-        except Exception:
-            pass
+MODEL_NAME = "bigscience/bloom-560m"
 
 
-def save_stats():
+def load_config():
     try:
-        with open(STATS_FILE, "w") as f:
-            json.dump(state, f, indent=2)
-        with open(MODE_FILE, "w") as f:
-            json.dump({"mode": state["mode"], "reason": state["mode_reason"]}, f)
+        if CONFIG_FILE.exists():
+            with open(CONFIG_FILE) as f:
+                return json.load(f)
     except Exception:
         pass
+    return {
+        "default_user": "user",
+        "default_pass": "cornholio",
+        "nodes": {}
+    }
 
 
-def discover_workers():
+def get_creds(ip):
+    config = load_config()
+    node_creds = config.get("nodes", {}).get(ip, {})
+    return node_creds.get("user", config.get("default_user", "user")), \
+           node_creds.get("pass", config.get("default_pass", "cornholio"))
+
+
+def ssh_exec(ip, cmd, timeout=30):
+    user, pwd = get_creds(ip)
+    try:
+        r = subprocess.run(
+            f'sshpass -p "{pwd}" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=3 '
+            f'{user}@{ip} "{cmd}"',
+            shell=True, capture_output=True, text=True, timeout=timeout
+        )
+        return r.returncode == 0, r.stdout.strip(), r.stderr.strip()
+    except Exception as e:
+        return False, "", str(e)
+
+
+def ssh_install_petals(ip):
+    user, pwd = get_creds(ip)
+    status = state["install_status"].get(ip, {})
+    status["phase"] = "starting"
+    state["install_status"][ip] = status
+    save_stats()
+
+    def do_install():
+        try:
+            state["install_status"][ip]["phase"] = "checking_python"
+            ok, out, _ = ssh_exec(ip, "python3 --version && which python3")
+            if not ok:
+                state["install_status"][ip] = {"phase": "failed", "error": "Python3 nicht gefunden"}
+                save_stats()
+                return False
+
+            state["install_status"][ip]["phase"] = "installing_virtualevn"
+            ssh_exec(ip, "pip3 install --user --break-system-packages virtualenv 2>/dev/null || true", timeout=60)
+
+            state["install_status"][ip]["phase"] = "creating_venv"
+            ssh_exec(ip, "mkdir -p ~/petals_env && rm -rf ~/petals_env/*")
+            ok, _, _ = ssh_exec(ip, "~/.local/bin/virtualenv ~/petals_env 2>/dev/null || python3 -m venv ~/petals_env")
+            if not ok:
+                state["install_status"][ip]["phase"] = "installing_setuptools"
+                ssh_exec(ip, "echo 'setuptools>=69,<70' > /tmp/requirements.txt && pip3 install --break-system-packages 'setuptools>=69,<70' 2>/dev/null || true", timeout=60)
+                ok, _, _ = ssh_exec(ip, "python3 -m venv ~/petals_env")
+                if not ok:
+                    state["install_status"][ip] = {"phase": "failed", "error": "venv creation failed"}
+                    save_stats()
+                    return False
+
+            state["install_status"][ip]["phase"] = "installing_petals"
+            cmd = ". ~/petals_env/bin/activate && pip install --upgrade pip setuptools wheel && " \
+                  f"pip install petals && python3 -c \"import petals; print(petals.__version__)\""
+            ok, out, err = ssh_exec(ip, cmd, timeout=600)
+
+            if ok:
+                state["install_status"][ip] = {"phase": "installed", "version": out.split("\n")[-1]}
+                save_stats()
+                return True
+            else:
+                state["install_status"][ip] = {"phase": "failed", "error": err[:200]}
+                save_stats()
+                return False
+        except Exception as e:
+            state["install_status"][ip] = {"phase": "failed", "error": str(e)}
+            save_stats()
+            return False
+
+    t = threading.Thread(target=do_install, daemon=True)
+    t.start()
+    return True
+
+
+def ssh_start_petals_server(ip, layer_start, layer_end):
+    user, pwd = get_creds(ip)
+    cmd = f". ~/petals_env/bin/activate && " \
+          f"nohup python3 -m petals.cli.run_server {MODEL_NAME} " \
+          f"--num_layers {layer_start}-{layer_end} " \
+          f"--host 0.0.0.0 --port 8080 > /tmp/petals_server.log 2>&1 & " \
+          f"echo $!"
+    ok, pid, _ = ssh_exec(ip, cmd, timeout=10)
+    return ok, pid
+
+
+def discover_nodes():
     result = subprocess.run(
-        ["nmap", "-p", "8080-8089", "--open", "-T4", f"{LOCAL_SUBNET}.0/24"],
+        ["nmap", "-sn", "-T4", f"{LOCAL_SUBNET}.0/24"],
         capture_output=True, text=True, timeout=60
     )
-    workers = []
-    current_ip = None
-    ip_pattern = re.compile(r"\((\d+\.\d+\.\d+\.\d+)\)")
-    port_pattern = re.compile(r"^(\d{4,5})/tcp\s+open")
+    ips = []
     for line in result.stdout.splitlines():
-        ip_match = ip_pattern.search(line)
-        if ip_match:
-            current_ip = ip_match.group(1)
-        port_match = port_pattern.match(line.strip())
-        if port_match and current_ip:
-            workers.append(f"http://{current_ip}:{port_match.group(1)}")
-    return sorted(set(workers))
+        match = re.search(r'(\d+\.\d+\.\d+\.\d+)', line)
+        if match:
+            ip = match.group(1)
+            if ip != LOCAL_IP:
+                ips.append(ip)
+    return ips
 
 
-def check_petals_on_node(ip):
+def test_ssh_access(ip):
+    user, pwd = get_creds(ip)
     try:
-        if ip == LOCAL_IP or ip == "127.0.0.1":
-            r = subprocess.run(
-                ["python3", "-c", "import petals; print(petals.__version__)"],
-                capture_output=True, text=True, timeout=5
-            )
-            if r.returncode == 0:
-                return r.stdout.strip()
-        else:
-            r = subprocess.run(
-                f"sshpass -p {SSH_PASS} ssh -o StrictHostKeyChecking=no -o ConnectTimeout=1 "
-                f"user@{ip} 'python3 -c \"import petals; print(petals.__version__)\" 2>/dev/null'",
-                shell=True, capture_output=True, text=True, timeout=5
-            )
-            if r.returncode == 0:
-                return r.stdout.strip()
+        r = subprocess.run(
+            f'sshpass -p "{pwd}" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=3 '
+            f'{user}@{ip} "echo ok"',
+            shell=True, capture_output=True, text=True, timeout=10
+        )
+        return r.returncode == 0
     except Exception:
-        pass
-    return None
+        return False
 
 
 def measure_latency(ip1, ip2):
     try:
         if ip2 == LOCAL_IP or ip2 == "127.0.0.1":
-            cmd = f"fping {ip2} -c 3 2>&1 | tail -1"
-            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
-            match = re.search(r'([0-9.]+)\s*ms', r.stdout)
+            r = subprocess.run(f"ping {ip2} -c 3", shell=True, capture_output=True, text=True, timeout=10)
+            match = re.search(r'rtt min/avg/max/mdev = [0-9.]+/([0-9.]+)/', r.stdout)
             if match:
                 return float(match.group(1))
         else:
-            cmd = (
-                f"sshpass -p {SSH_PASS} ssh -o StrictHostKeyChecking=no -o ConnectTimeout=1 "
-                f"user@{ip2} \"ping {ip1} -c 3 2>/dev/null | grep rtt | awk -F'/' '{{print $5}}'\""
+            user, pwd = get_creds(ip2)
+            r = subprocess.run(
+                f'sshpass -p "{pwd}" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=3 '
+                f'{user}@{ip2} "ping {ip1} -c 3 2>/dev/null" | grep rtt | awk -F/ \'{{print $5}}\'',
+                shell=True, capture_output=True, text=True, timeout=10
             )
-            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
             if r.stdout.strip():
                 return float(r.stdout.strip())
     except Exception:
@@ -126,115 +198,131 @@ def measure_latency(ip1, ip2):
     return 999
 
 
+def get_node_ram(ip):
+    try:
+        ok, out, _ = ssh_exec(ip, "free | awk '/^Mem:/{print $2}'")
+        if ok and out.strip().isdigit():
+            return int(out.strip())
+    except Exception:
+        pass
+    return None
+
+
 def evaluate_petals_mode():
-    workers = discover_workers()
-    petals_ips = []
-    latencies = {}
-    node_rams = {}
+    if not INSTALL_LOCK.exists():
+        return False, "Keine Petals-Nodes installiert"
 
-    for w in workers:
-        ip = w.split("//")[1].split(":")[0]
-        petals_ver = check_petals_on_node(ip)
-        if petals_ver:
-            petals_ips.append(ip)
-            latencies[ip] = {}
+    nodes = []
+    try:
+        with open(INSTALL_LOCK) as f:
+            nodes = json.load(f)
+    except Exception:
+        return False, "Install-Lock leer"
 
-    if len(petals_ips) < 2:
-        return False, "Nur 1 Node mit Petals installiert (mind. 2 benötigt)"
+    if len(nodes) < 2:
+        return False, f"Nur {len(nodes)} Node mit Petals (mind. 2 benötigt)"
 
-    for ip1 in petals_ips:
-        for ip2 in petals_ips:
-            if ip1 < ip2:
-                lat = measure_latency(ip1, ip2)
-                latencies[ip1][ip2] = lat
-                latencies[ip2] = latencies.get(ip2, {})
-                latencies[ip2][ip1] = lat
+    for n in nodes:
+        ok, _, _ = ssh_exec(n["ip"], "python3 -c 'import petals'")
+        if not ok:
+            return False, f"Petals auf {n['ip']} nicht importierbar"
 
-    max_latency = 0
-    for ip1 in latencies:
-        for ip2 in latencies.get(ip1, {}):
-            max_latency = max(max_latency, latencies[ip1][ip2])
+    for i, n1 in enumerate(nodes):
+        for n2 in nodes[i+1:]:
+            lat = measure_latency(n1["ip"], n2["ip"])
+            if lat > 20:
+                return False, f"Latenz {n1['ip']}<->{n2['ip']}: {lat:.1f}ms > 20ms"
 
-    if max_latency > 20:
-        return False, f"Netzwerk-Latenz zu hoch: {max_latency:.1f}ms (max 20ms)"
-
-    for ip in petals_ips:
-        try:
-            if ip == LOCAL_IP or ip == "127.0.0.1":
-                r = subprocess.run("free | awk '/^Mem:/{print $2}'", shell=True, capture_output=True, text=True, timeout=3)
-            else:
-                r = subprocess.run(
-                    f"sshpass -p {SSH_PASS} ssh -o StrictHostKeyChecking=no -o ConnectTimeout=1 "
-                    f"user@{ip} \"free | awk '/^Mem:/{{print $2}}\" 2>/dev/null\"",
-                    shell=True, capture_output=True, text=True, timeout=3
-                )
-            if r.stdout.strip():
-                node_rams[ip] = int(r.stdout.strip())
-        except Exception:
-            pass
-
-    if len(node_rams) >= 2:
-        rams = list(node_rams.values())
+    rams = [n.get("ram_kb") for n in nodes if n.get("ram_kb")]
+    if len(rams) >= 2:
         if max(rams) > min(rams) * 1.5:
             return False, "Hardware zu unterschiedlich (RAM-Faktor >1.5)"
 
-    return True, f"Petals aktiv: {len(petals_ips)} Nodes, max. Latenz {max_latency:.1f}ms"
+    state["petals_nodes"] = nodes
+    return True, f"Petals aktiv: {len(nodes)} Nodes ({', '.join(n['ip'] for n in nodes)})"
 
 
-def get_remote_stats(ip):
-    try:
-        cmd = (
-            f"sshpass -p {SSH_PASS} ssh -o StrictHostKeyChecking=no -o ConnectTimeout=1 "
-            f"user@{ip} "
-            "\"idle=$(top -b -n1 2>/dev/null | grep '^%%Cpu' | grep -oP '[0-9,]+(?=\\s*id)' | tr ',' '.'); "
-            "idle=${idle:-100}; idle=${idle%%.*}; "
-            "cpu=$((100-idle)); [ $cpu -lt 0 ] && cpu=0; "
-            "ram=$(free | awk '/^Mem:/{printf \"%.0f\",$3/$2*100}'); "
-            "echo \\\"$cpu $ram\\\"\""
-        )
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
-        parts = result.stdout.strip().split()
-        if len(parts) == 2:
-            return int(parts[0]), int(parts[1])
-    except Exception:
-        pass
-    return None, None
+def auto_install_loop():
+    if INSTALL_LOCK.exists():
+        return
 
+    state["install_status"] = {"phase": "scanning"}
+    save_stats()
 
-def get_local_stats():
-    try:
-        line = subprocess.run(
-            "top -b -n1 | grep '^%Cpu'", shell=True, capture_output=True, text=True, timeout=5
-        ).stdout.strip()
-        idle_match = re.search(r'([0-9,]+)\s*id', line)
-        if idle_match:
-            idle = float(idle_match.group(1).replace(',', '.'))
-            cpu = max(0, int(100 - idle))
-        else:
-            cpu = 0
-        ram_line = subprocess.run(
-            "free | awk '/^Mem:/{printf \"%.0f\",$3/$2*100}'", shell=True,
-            capture_output=True, text=True, timeout=5
-        ).stdout.strip()
-        ram = int(ram_line) if ram_line.isdigit() else 0
-        return cpu, ram
-    except Exception:
-        return None, None
+    nodes = discover_nodes()
+    eligible = []
+
+    for ip in nodes:
+        if test_ssh_access(ip):
+            ram = get_node_ram(ip)
+            if ram and ram > 4000000:
+                eligible.append({"ip": ip, "ram_kb": ram})
+            state["install_status"][ip] = {"phase": "ssh_ok", "ram_kb": ram}
+
+    save_stats()
+
+    if len(eligible) >= 2:
+        state["install_status"] = {"phase": "installing"}
+        save_stats()
+
+        total_layers = 24
+        layers_per_node = total_layers // len(eligible)
+        installed_nodes = []
+
+        for i, node in enumerate(eligible):
+            layer_start = i * layers_per_node
+            layer_end = (i + 1) * layers_per_node - 1
+            if i == len(eligible) - 1:
+                layer_end = total_layers - 1
+
+            ssh_install_petals(node["ip"])
+            time.sleep(2)
+
+            state["install_status"][node["ip"]]["phase"] = "waiting_install"
+            save_stats()
+
+            max_wait = 600
+            waited = 0
+            while waited < max_wait:
+                with state_lock:
+                    status = state["install_status"].get(node["ip"], {})
+                if status.get("phase") == "installed":
+                    ok, pid = ssh_start_petals_server(node["ip"], layer_start, layer_end)
+                    if ok:
+                        installed_nodes.append({**node, "pid": pid, "layers": f"{layer_start}-{layer_end}"})
+                    break
+                time.sleep(5)
+                waited += 5
+
+        if len(installed_nodes) >= 2:
+            with open(INSTALL_LOCK, "w") as f:
+                json.dump(installed_nodes, f, indent=2)
+            state["petals_nodes"] = installed_nodes
 
 
 def health_check_workers():
-    workers = discover_workers()
-    now = datetime.now().isoformat()
+    workers = []
+    result = subprocess.run(
+        ["nmap", "-p", "8080-8089", "--open", "-T4", f"{LOCAL_SUBNET}.0/24"],
+        capture_output=True, text=True, timeout=60
+    )
+    current_ip = None
+    for line in result.stdout.splitlines():
+        ip_match = re.search(r'\((\d+\.\d+\.\d+\.\d+)\)', line)
+        if ip_match:
+            current_ip = ip_match.group(1)
+        port_match = re.match(r'^(\d{4,5})/tcp\s+open', line.strip())
+        if port_match and current_ip:
+            workers.append(f"http://{current_ip}:{port_match.group(1)}")
 
+    now = datetime.now().isoformat()
     petals_ok, petals_reason = evaluate_petals_mode()
 
     with state_lock:
         state["mode"] = "petals" if petals_ok else "llama.cpp"
         state["mode_reason"] = petals_reason
 
-        known = set(state["workers"].keys())
         found = set()
-
         for w in workers:
             found.add(w)
             try:
@@ -247,19 +335,8 @@ def health_check_workers():
                 healthy = False
 
             ip = w.split("//")[1].split(":")[0]
-            if ip == LOCAL_IP or ip == "127.0.0.1":
-                cpu, ram = get_local_stats()
-            else:
-                cpu, ram = get_remote_stats(ip)
-
             if w not in state["workers"]:
-                state["workers"][w] = {
-                    "ip": ip,
-                    "requests_total": 0,
-                    "requests_session": 0,
-                    "latencies": [],
-                    "healthy": False,
-                }
+                state["workers"][w] = {"ip": ip, "requests_total": 0, "requests_session": 0, "latencies": [], "healthy": False}
 
             entry = state["workers"][w]
             entry["healthy"] = healthy
@@ -268,16 +345,7 @@ def health_check_workers():
             if len(entry["latencies"]) > 10:
                 entry["latencies"] = entry["latencies"][-10:]
             entry["avg_latency_ms"] = round(sum(entry["latencies"]) / len(entry["latencies"]), 1)
-            entry["cpu_percent"] = cpu
-            entry["ram_percent"] = ram
             entry["last_check"] = now
-
-        for old in known - found:
-            if old in state["workers"]:
-                state["workers"][old]["healthy"] = False
-                state["workers"][old]["latency_ms"] = 9999
-
-        save_stats()
 
 
 def select_best_worker():
@@ -287,9 +355,7 @@ def select_best_worker():
             if not info.get("healthy", False):
                 continue
             latency = info.get("avg_latency_ms", 9999)
-            cpu = info.get("cpu_percent", 100)
-            ram = info.get("ram_percent", 100)
-            score = (latency / 100) * 0.3 + cpu * 0.4 + ram * 0.3
+            score = latency * 0.3 + info.get("cpu_percent", 50) * 0.4 + info.get("ram_percent", 50) * 0.3
             candidates.append((w, score, info))
 
         if not candidates:
@@ -304,9 +370,20 @@ def select_best_worker():
         return best[0]
 
 
+def save_stats():
+    try:
+        with open(STATS_FILE, "w") as f:
+            json.dump(state, f, indent=2)
+        with open(MODE_FILE, "w") as f:
+            json.dump({"mode": state["mode"], "reason": state["mode_reason"]}, f)
+    except Exception:
+        pass
+
+
 def run_health_loop():
     while True:
         try:
+            auto_install_loop()
             health_check_workers()
         except Exception:
             pass
@@ -315,7 +392,6 @@ def run_health_loop():
 
 health_thread = threading.Thread(target=run_health_loop, daemon=True)
 health_thread.start()
-load_stats()
 
 
 class ChatRequest(BaseModel):
@@ -350,11 +426,14 @@ def workers():
 @app.get("/mode")
 def mode():
     with state_lock:
-        return {
-            "mode": state["mode"],
-            "reason": state["mode_reason"],
-            "petals_nodes": state.get("petals_nodes", []),
-        }
+        return {"mode": state["mode"], "reason": state["mode_reason"], "petals_nodes": state.get("petals_nodes", [])}
+
+
+@app.post("/install")
+def install(ip: str):
+    if ssh_install_petals(ip):
+        return {"status": "installation_started"}
+    return {"status": "failed"}
 
 
 def _route_request(messages, max_tokens, temperature):
@@ -362,17 +441,16 @@ def _route_request(messages, max_tokens, temperature):
 
     if mode == "petals":
         try:
-            import petals
             from petals import DistributedLlamaForCausalLM, AutoTokenizer
-            tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-70b-chat-hf")
-            model = DistributedLlamaForCausalLM.from_pretrained("meta-llama/Llama-2-70b-chat-hf")
+            tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+            model = DistributedLlamaForCausalLM.from_pretrained(MODEL_NAME)
             inputs = tokenizer.apply_chat_template(messages, return_tensors="pt")
             outputs = model.generate(inputs, max_new_tokens=max_tokens, temperature=temperature)
             response = tokenizer.decode(outputs[0], skip_special_tokens=True)
             return {"mode": "petals", "response": response}
         except Exception as e:
             state["mode"] = "llama.cpp"
-            state["mode_reason"] = f"Petals-Fehler, Fallback zu llama.cpp: {e}"
+            state["mode_reason"] = f"Petals-Fallback: {e}"
             save_stats()
 
     worker = select_best_worker()
@@ -386,12 +464,8 @@ def _route_request(messages, max_tokens, temperature):
             timeout=180,
         )
         result = resp.json()
-        return {
-            "mode": "llama.cpp",
-            "worker": worker,
-            "response": result["choices"][0]["message"]["content"],
-        }
-    except Exception as e:
+        return {"mode": "llama.cpp", "worker": worker, "response": result["choices"][0]["message"]["content"]}
+    except Exception:
         return None
 
 
@@ -405,10 +479,7 @@ def chat(req: ChatRequest):
 
 @app.post("/ask")
 def ask(req: PromptRequest):
-    result = _route_request(
-        [{"role": "user", "content": req.prompt}],
-        req.max_tokens, 0.7
-    )
+    result = _route_request([{"role": "user", "content": req.prompt}], req.max_tokens, 0.7)
     if not result:
         raise HTTPException(status_code=503, detail="Kein Worker verfügbar")
     return result
