@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 """
-Einfacher Client für llama.cpp Lastverteilung (Round-Robin)
-Worker werden automatisch via nmap im lokalen Netzwerk erkannt.
+Einfacher Client für KI-Lastverteilung
+Worker werden automatisch via nmap erkannt, intelligente Lastverteilung.
 Verwendung: python3 scripts/llama_client.py "Deine Frage hier" [--max-tokens ZAHL]
 """
 
 import argparse
 import os
+import random
 import re
 import subprocess
 import sys
-import tempfile
-
-STATE_FILE = os.path.join(tempfile.gettempdir(), "llama_rr_state")
+import time
 
 
 def discover_workers():
@@ -43,24 +42,34 @@ def discover_workers():
     return sorted(set(workers))
 
 
-def get_next_worker(workers):
-    idx = 0
-    if os.path.exists(STATE_FILE):
+def select_worker(workers):
+    healthy = []
+    for w in workers:
         try:
-            with open(STATE_FILE, "r") as f:
-                idx = int(f.read().strip())
-        except (ValueError, IOError):
-            idx = 0
-    worker = workers[idx % len(workers)]
-    with open(STATE_FILE, "w") as f:
-        f.write(str((idx + 1) % len(workers)))
-    return worker
+            import requests
+            start = time.time()
+            resp = requests.get(f"{w}/health", timeout=3)
+            latency = (time.time() - start) * 1000
+            if resp.status_code == 200:
+                healthy.append((w, latency))
+        except:
+            pass
+
+    if not healthy:
+        return None
+
+    if len(healthy) == 1:
+        return healthy[0][0]
+
+    fastest = min(healthy, key=lambda x: x[1])[1]
+    candidates = [w for w, lat in healthy if lat <= fastest * 1.5]
+    return random.choice(candidates)
 
 
 def main():
     parser = argparse.ArgumentParser(description="llama.cpp Client für KI-Lastverteilung")
     parser.add_argument("prompt", nargs="?", default="Hello!", help="Der Prompt für die KI")
-    parser.add_argument("--max-tokens", type=int, default=100, help="Maximale Anzahl Token")
+    parser.add_argument("--max-tokens", type=int, default=1024, help="Maximale Anzahl Token")
     args = parser.parse_args()
 
     workers = discover_workers()
@@ -68,7 +77,10 @@ def main():
         print("Keine Worker gefunden. Bitte stelle sicher, dass mindestens ein llama-server läuft (Port 8080-8089).")
         sys.exit(1)
 
-    worker = get_next_worker(workers)
+    worker = select_worker(workers)
+    if not worker:
+        print("Kein verfügbarer Worker gefunden!")
+        sys.exit(1)
 
     print(f"=== llama.cpp Client ===")
     print(f"Worker: {worker}")
@@ -78,18 +90,17 @@ def main():
     try:
         import requests
         resp = requests.post(
-            f"{worker}/completion",
-            json={"prompt": args.prompt, "max_tokens": args.max_tokens},
-            timeout=30
+            f"{worker}/v1/chat/completions",
+            json={
+                "messages": [{"role": "user", "content": args.prompt}],
+                "max_tokens": args.max_tokens,
+                "temperature": 0.7
+            },
+            timeout=120
         )
         result = resp.json()
         print(f"\n=== Antwort ===")
-        if "content" in result:
-            print(result["content"])
-        elif "response" in result:
-            print(result["response"])
-        else:
-            print(result)
+        print(result["choices"][0]["message"]["content"])
     except ImportError:
         print("Fehler: requests nicht installiert. Installiere mit: pip install requests")
         sys.exit(1)

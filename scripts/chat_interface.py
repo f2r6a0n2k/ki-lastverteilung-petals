@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Chat-Interface für KI-Lastverteilung mit Konversationsverlauf
-Worker werden automatisch via nmap erkannt, Round-Robin Lastverteilung.
+Worker werden automatisch via nmap erkannt, intelligente Lastverteilung.
 Verwendung: python3 scripts/chat_interface.py
 """
 
@@ -11,10 +11,10 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 import time
+import random
 
-STATE_FILE = os.path.join(tempfile.gettempdir(), "llama_rr_state")
+WORKER_METRICS = {}
 
 
 def discover_workers():
@@ -45,18 +45,52 @@ def discover_workers():
     return sorted(set(workers))
 
 
-def get_next_worker(workers):
-    idx = 0
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE, "r") as f:
-                idx = int(f.read().strip())
-        except (ValueError, IOError):
-            idx = 0
-    worker = workers[idx % len(workers)]
-    with open(STATE_FILE, "w") as f:
-        f.write(str((idx + 1) % len(workers)))
-    return worker
+def check_worker_health(worker):
+    try:
+        start = time.time()
+        import requests
+        resp = requests.get(f"{worker}/health", timeout=3)
+        latency = (time.time() - start) * 1000
+        data = resp.json()
+        return {
+            "healthy": True,
+            "latency_ms": latency,
+            "status": data.get("status", "unknown"),
+            "message": ""
+        }
+    except Exception as e:
+        return {
+            "healthy": False,
+            "latency_ms": 9999,
+            "status": "error",
+            "message": str(e)
+        }
+
+
+def select_worker(workers):
+    healthy_workers = []
+    for w in workers:
+        health = check_worker_health(w)
+        WORKER_METRICS[w] = health
+        if health["healthy"]:
+            healthy_workers.append((w, health))
+
+    if not healthy_workers:
+        return None
+
+    if len(healthy_workers) == 1:
+        return healthy_workers[0][0]
+
+    fastest = min(healthy_workers, key=lambda x: x[1]["latency_ms"])
+    fastest_latency = fastest[1]["latency_ms"]
+
+    candidates = [
+        (w, h) for w, h in healthy_workers
+        if h["latency_ms"] <= fastest_latency * 1.5
+    ]
+
+    chosen = random.choice(candidates)[0]
+    return chosen
 
 
 class ChatSession:
@@ -112,7 +146,7 @@ RESET = "\033[0m"
 def print_banner(workers):
     print(f"{BOLD}{'=' * 50}{RESET}")
     print(f"{BOLD}   KI-Lastverteilung Chat-Interface{RESET}")
-    print(f"{DIM}   Round-Robin • {len(workers)} Worker • Kontext-aware{RESET}")
+    print(f"{DIM}   Intelligente Lastverteilung • {len(workers)} Worker{RESET}")
     print(f"{BOLD}{'=' * 50}{RESET}")
     print()
     print(f"{BLUE}Gefundene Worker:{RESET}")
@@ -123,15 +157,26 @@ def print_banner(workers):
     print(f"   {DIM}/help{RESET}       - Diese Hilfe anzeigen")
     print(f"   {DIM}/clear{RESET}      - Konversation zurücksetzen")
     print(f"   {DIM}/workers{RESET}    - Verfügbare Worker zeigen")
+    print(f"   {DIM}/status{RESET}     - Worker-Gesundheitsstatus")
     print(f"   {DIM}/system [text]{RESET} - System-Prompt setzen")
     print(f"   {DIM}/history{RESET}    - Nachrichtenanzahl zeigen")
     print(f"   {DIM}/quit{RESET}       - Beenden")
     print()
 
 
+def print_worker_status():
+    if not WORKER_METRICS:
+        print(f"{YELLOW}Noch keine Worker-Status verfügbar.{RESET}")
+        return
+    print(f"{BLUE}Worker-Status:{RESET}")
+    for w, h in WORKER_METRICS.items():
+        status = f"{GREEN}OK{RESET}" if h["healthy"] else f"{RED}Fehler{RESET}"
+        print(f"   {w}: {status} ({h['latency_ms']:.0f}ms)")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Chat-Interface für KI-Lastverteilung")
-    parser.add_argument("--max-tokens", type=int, default=256, help="Maximale Token pro Antwort")
+    parser.add_argument("--max-tokens", type=int, default=1024, help="Maximale Token pro Antwort")
     parser.add_argument("--system", type=str, default=None, help="System-Prompt")
     args = parser.parse_args()
 
@@ -154,12 +199,11 @@ def main():
         if not user_input:
             continue
 
-        # Commands
         if user_input.startswith("/"):
             parts = user_input.split(None, 1)
             cmd = parts[0].lower()
 
-            if cmd == "/quit" or cmd == "/exit":
+            if cmd in ("/quit", "/exit"):
                 print(f"{YELLOW}Beende...{RESET}")
                 break
             elif cmd == "/clear":
@@ -169,6 +213,8 @@ def main():
                 print(f"{BLUE}Verfügbare Worker:{RESET}")
                 for i, w in enumerate(workers, 1):
                     print(f"   {GREEN}•{RESET} Worker {i}: {w}")
+            elif cmd == "/status":
+                print_worker_status()
             elif cmd == "/system":
                 if len(parts) > 1:
                     session.set_system(parts[1])
@@ -182,6 +228,7 @@ def main():
                 print(f"{YELLOW}Befehle:{RESET}")
                 print(f"   {DIM}/clear{RESET}      - Konversation zurücksetzen")
                 print(f"   {DIM}/workers{RESET}    - Verfügbare Worker zeigen")
+                print(f"   {DIM}/status{RESET}     - Worker-Gesundheitsstatus")
                 print(f"   {DIM}/system [text]{RESET} - System-Prompt setzen")
                 print(f"   {DIM}/history{RESET}    - Nachrichtenanzahl zeigen")
                 print(f"   {DIM}/quit{RESET}       - Beenden")
@@ -189,8 +236,10 @@ def main():
                 print(f"{RED}Unbekannter Befehl: {cmd}. Tippe /help für Hilfe.{RESET}")
             continue
 
-        # Round-Robin Worker auswählen
-        worker = get_next_worker(workers)
+        worker = select_worker(workers)
+        if not worker:
+            print(f"{RED}Kein verfügbarer Worker gefunden!{RESET}")
+            continue
 
         session.add_user(user_input)
 
@@ -213,7 +262,6 @@ def main():
 
         except Exception as e:
             print(f"{RED}Fehler: {e}{RESET}")
-            # User message entfernen falls Antwort fehlgeschlagen
             session.messages.pop()
 
     print(f"{YELLOW}Auf Wiedersehen!{RESET}")

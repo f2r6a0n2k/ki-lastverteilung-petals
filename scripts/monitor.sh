@@ -23,14 +23,15 @@ scan_network() {
     '
 }
 
-# Schnelle lokale CPU aus /proc/stat (kein top!)
+# CPU aus /proc/stat (zwei Messungen für Delta)
 local_stats() {
-    local u i t pct m
-    read -r _ u _ _ i _ _ _ _ _ < /proc/stat
-    t=$((u + i))
-    pct=$((u * 100 / (t > 0 ? t : 1)))
-    m=$(free | awk '/^Mem:/{printf "%.0f", $3/$2*100}')
-    echo "$pct $m"
+    read -r _ u1 _ _ i1 _ _ _ _ _ < /proc/stat
+    sleep 0.2
+    read -r _ u2 _ _ i2 _ _ _ _ _ < /proc/stat
+    local du=$((u2 - u1)) di=$((i2 - i1)) dt=$((du + di))
+    local cpu=$((dt > 0 ? du * 100 / dt : 0))
+    local ram=$(free | awk '/^Mem:/{printf "%.0f", $3/$2*100}')
+    echo "$cpu $ram"
 }
 
 w() { printf "\033[2K\033[0G%b\n" "$1"; }
@@ -72,8 +73,16 @@ while true; do
                 read -r cpu ram <<< "$(local_stats)"
                 w "   ${BLUE}CPU:${RESET} ${cpu}%  ${BLUE}RAM:${RESET} ${ram}%"
             else
-                stats=$(timeout 2 sshpass -p "cornholio" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=1 "user@${ip}" \
-                    'read -r _ u _ _ i _ _ _ _ _ < /proc/stat; t=$((u+i)); p=$((u*100/(t>0?t:1))); m=$(free | awk "/^Mem:/{printf \"%.0f\",\$3/\$2*100}"); echo "$p $m"' 2>/dev/null)
+                stats=$(timeout 3 sshpass -p "cornholio" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=1 "user@${ip}" bash <<'REMOTE'
+cpu() { awk '/^cpu /{print $2+$3+$4+$7+$8+$9, $5+$6}' /proc/stat; }
+r1=$(cpu); sleep 0.2; r2=$(cpu)
+b1=${r1%% *}; b2=${r2%% *}
+i1=${r1##* }; i2=${r2##* }
+du=$((b2-b1)); di=$((i2-i1)); dt=$((du+di))
+p=$((dt>0?du*100/dt:0))
+m=$(free | awk '/^Mem:/{printf "%.0f",$3/$2*100}')
+echo "$p $m"
+REMOTE
                 if [ -n "$stats" ]; then
                     read -r cpu ram <<< "$stats"
                     w "   ${BLUE}CPU:${RESET} ${cpu}%  ${BLUE}RAM:${RESET} ${ram}%"
