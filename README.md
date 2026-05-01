@@ -50,7 +50,60 @@ Der Koordinator scannt automatisch das Netzwerk und entscheidet:
 - **≥2 Nodes mit Petals + gute Latenz** → Petals-Modus (verteilte Inferenz)
 - **Sonst** → llama.cpp-Modus (parallele Worker mit Score-basierter Auswahl)
 
-### 3. Anfragen senden
+### 3. OpenCode-Integration
+
+Der Koordinator unterstützt OpenAI-kompatible Endpunkte und kann direkt mit OpenCode genutzt werden.
+
+#### Option A: Projekt-Konfiguration
+
+Kopiere die Beispielkonfiguration in dein Projekt:
+```bash
+cp opencode.json.example /dein/projekt/opencode.json
+```
+
+#### Option B: Globale Konfiguration
+
+Erstelle `~/.config/opencode/opencode.json`:
+```json
+{
+    "$schema": "https://opencode.ai/config.json",
+    "provider": {
+        "ki-lastverteilung": {
+            "npm": "@ai-sdk/openai-compatible",
+            "name": "KI-Lastverteilung (lokal)",
+            "options": {
+                "baseURL": "http://127.0.0.1:5000/v1"
+            },
+            "models": {
+                "ki-lastverteilung-auto": {
+                    "name": "KI-Lastverteilung (Auto)",
+                    "limit": { "context": 16000, "output": 4096 }
+                }
+            }
+        }
+    }
+}
+```
+
+#### Nutzung
+
+```bash
+# Koordinator muss laufen
+~/petals-env/bin/python scripts/koordinator.py &
+
+# OpenCode im Projekt starten
+cd /dein/projekt
+opencode
+
+# Oder direkt mit Modell
+opencode --model ki-lastverteilung/ki-lastverteilung-auto
+```
+
+Im TUI: `/models` → Wähle `KI-Lastverteilung (Auto)`.
+
+**Hinweis:** Der `/connect`-Befehl ist nicht nötig – der Koordinator benötigt keine API-Keys für den lokalen Zugriff.
+
+### 4. Anfragen senden
 
 ```bash
 # Über Koordinator (empfohlen)
@@ -60,6 +113,11 @@ python3 scripts/llama_client.py "Wie funktioniert KI?"
 curl -X POST http://192.168.178.109:5000/ask \
   -H "Content-Type: application/json" \
   -d '{"prompt": "Was ist Petals?", "max_tokens": 128}'
+
+# OpenAI-kompatibel (für OpenCode, ChatGPT-Clients etc.)
+curl -X POST http://192.168.178.109:5000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"messages": [{"role": "user", "content": "Hallo!"}]}'
 ```
 
 ### 4. Monitoring

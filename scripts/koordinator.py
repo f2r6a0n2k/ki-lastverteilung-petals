@@ -17,12 +17,14 @@ import re
 import subprocess
 import threading
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
 import requests
 import uvicorn
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 STATS_FILE = Path("/tmp/llama_stats.json")
@@ -423,6 +425,133 @@ class PromptRequest(BaseModel):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# === OpenAI-kompatible Endpunkte ===
+
+@app.get("/v1/models")
+def list_models():
+    with state_lock:
+        mode = state["mode"]
+        models = []
+        for w, info in state["workers"].items():
+            ip = info.get("ip", w)
+            models.append({
+                "id": f"ki-lastverteilung-{ip.replace('.', '-')}",
+                "object": "model",
+                "created": int(time.time()),
+                "owned_by": "ki-lastverteilung",
+            })
+        if not models:
+            models.append({
+                "id": "ki-lastverteilung-auto",
+                "object": "model",
+                "created": int(time.time()),
+                "owned_by": "ki-lastverteilung",
+            })
+        return {"object": "list", "data": models}
+
+
+class OpenAIChatRequest(BaseModel):
+    messages: list = []
+    model: str = "ki-lastverteilung-auto"
+    max_tokens: int = 1024
+    temperature: float = 0.7
+    stream: bool = False
+
+
+@app.post("/v1/chat/completions")
+def openai_chat(req: OpenAIChatRequest):
+    mode = state["mode"]
+
+    if mode == "petals":
+        try:
+            from petals import DistributedLlamaForCausalLM, AutoTokenizer
+            tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+            model = DistributedLlamaForCausalLM.from_pretrained(MODEL_NAME)
+            inputs = tokenizer.apply_chat_template(req.messages, return_tensors="pt")
+            outputs = model.generate(inputs, max_new_tokens=req.max_tokens, temperature=req.temperature)
+            response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+            if req.stream:
+                return _stream_response(response, mode="petals")
+            return _completion_response(response, mode="petals")
+        except Exception as e:
+            state["mode"] = "llama.cpp"
+            state["mode_reason"] = f"Petals-Fallback: {e}"
+            save_stats()
+
+    worker = select_best_worker()
+    if not worker:
+        raise HTTPException(status_code=503, detail="Kein Worker verfügbar")
+
+    try:
+        resp = requests.post(
+            f"{worker}/v1/chat/completions",
+            json={"messages": req.messages, "max_tokens": req.max_tokens, "temperature": req.temperature},
+            timeout=180,
+        )
+        result = resp.json()
+        content = result["choices"][0]["message"]["content"]
+
+        if req.stream:
+            return _stream_response(content, mode="llama.cpp", worker=worker)
+        return _completion_response(content, mode="llama.cpp", worker=worker)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+def _completion_response(content, mode="llama.cpp", worker=None):
+    return {
+        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": "ki-lastverteilung",
+        "choices": [{
+            "index": 0,
+            "message": {"role": "assistant", "content": content},
+            "finish_reason": "stop",
+        }],
+        "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        },
+        "metadata": {"mode": mode, "worker": worker},
+    }
+
+
+def _stream_response(content, mode="llama.cpp", worker=None):
+    def generate():
+        chat_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+        for chunk in content.split(" "):
+            data = {
+                "id": chat_id,
+                "object": "chat.completion.chunk",
+                "created": int(time.time()),
+                "model": "ki-lastverteilung",
+                "choices": [{
+                    "index": 0,
+                    "delta": {"role": "assistant", "content": chunk + " "},
+                    "finish_reason": None,
+                }],
+            }
+            yield f"data: {json.dumps(data)}\n\n"
+            time.sleep(0.01)
+        data = {
+            "id": chat_id,
+            "object": "chat.completion.chunk",
+            "created": int(time.time()),
+            "model": "ki-lastverteilung",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        }
+        yield f"data: {json.dumps(data)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+# === Bestehende Endpunkte ===
 
 
 @app.get("/stats")

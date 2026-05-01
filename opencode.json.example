@@ -1,0 +1,21 @@
+{
+    "$schema": "https://opencode.ai/config.json",
+    "provider": {
+        "ki-lastverteilung": {
+            "npm": "@ai-sdk/openai-compatible",
+            "name": "KI-Lastverteilung (lokal)",
+            "options": {
+                "baseURL": "http://127.0.0.1:5000/v1"
+            },
+            "models": {
+                "ki-lastverteilung-auto": {
+                    "name": "KI-Lastverteilung (Auto)",
+                    "limit": {
+                        "context": 16000,
+                        "output": 4096
+                    }
+                }
+            }
+        }
+    }
+}
