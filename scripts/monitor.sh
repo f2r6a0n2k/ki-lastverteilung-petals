@@ -94,11 +94,62 @@ while true; do
     # Koordinator
     w "${BLUE}📊 Koordinator (Round-Robin)${RESET}"
     if ps aux 2>/dev/null | grep -q "[u]vicorn koordinator"; then
-        w "   Status: ${GREEN}✅ AKTIV${RESET}"
+        w "   Status: ${GREEN}✅ AKTIV (http://192.168.178.109:5000)${RESET}"
     else
         w "   Status: ${RED}❌ INAKTIV${RESET}"
+        w "   Start: cd ~/Dokumente/KI_Lastverteilung_Petals && ~/petals-env/bin/python scripts/koordinator.py &'"
     fi
     w ""
+
+    # Anfrage-Statistik
+    if [ -f /tmp/llama_stats.json ] || [ -f /tmp/llama_requests.json ]; then
+        w "${BOLD}────────── Anfrage-Statistik ──────────${RESET}"
+        session_total=0
+        per_worker=""
+
+        # Koordinator-Stats
+        if [ -f /tmp/llama_stats.json ]; then
+            session_total=$(python3 -c "import json; d=json.load(open('/tmp/llama_stats.json')); print(d.get('total_requests',0))" 2>/dev/null)
+            per_worker=$(python3 -c "
+import json
+d=json.load(open('/tmp/llama_stats.json'))
+for w,info in d.get('workers',{}).items():
+    ip=w.split('//')[1].split(':')[0] if '//' in w else w
+    req=info.get('requests_session',0)
+    lat=info.get('avg_latency_ms','?')
+    cpu=info.get('cpu_percent','?')
+    ram=info.get('ram_percent','?')
+    print(f'{ip}|{req}|{lat}|{cpu}|{ram}')
+" 2>/dev/null)
+        fi
+
+        # Client-Stats (Fallback)
+        if [ -f /tmp/llama_requests.json ]; then
+            client_total=$(python3 -c "import json; d=json.load(open('/tmp/llama_requests.json')); print(d.get('session_total',0))" 2>/dev/null)
+            client_workers=$(python3 -c "
+import json
+d=json.load(open('/tmp/llama_requests.json'))
+for w,c in d.get('per_worker',{}).items():
+    print(f'{w}|{c}|-|-|-')
+" 2>/dev/null)
+            if [ -z "$per_worker" ]; then
+                session_total=$client_total
+                per_worker=$client_workers
+            else
+                session_total=$((session_total + client_total))
+                per_worker="${per_worker}
+${client_workers}"
+            fi
+        fi
+
+        w "   Gesamt: ${BOLD}${session_total} Anfragen${RESET}"
+        while IFS='|' read -r ip req lat cpu ram; do
+            [ -z "$ip" ] && continue
+            [ "$ip" = "$LOCAL_IP" ] && ip="${ip} (lokal)"
+            w "   ${BLUE}${ip}${RESET}: ${req} Anfragen (${lat}ms, CPU:${cpu}%, RAM:${ram}%)"
+        done <<< "$per_worker"
+        w ""
+    fi
     w "${YELLOW}Drücke Ctrl+C zum Beenden${RESET}"
 
     printf "\033[J"
