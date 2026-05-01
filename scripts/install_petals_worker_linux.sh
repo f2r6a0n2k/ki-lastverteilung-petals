@@ -21,9 +21,20 @@ cd "$INSTALL_DIR"
 python3 -m venv venv
 source venv/bin/activate
 
+# Installationsfunktion mit pipx-Fallback
+install_pkg() {
+    if pip install "$1" 2>&1 | grep -q "externally-managed-environment"; then
+        echo "pip blockiert, versuche pipx..."
+        pipx install "$1" || echo "Fehler: $1 konnte nicht installiert werden"
+    else
+        echo "$1 erfolgreich installiert"
+    fi
+}
+
 # Petals und PyTorch installieren (CPU-Version)
-pip install --upgrade pip
-pip install petals torch --index-url https://download.pytorch.org/whl/cpu
+pip install --upgrade pip 2>&1 | grep -q "externally-managed-environment" && pipx install --upgrade pip || pip install --upgrade pip
+install_pkg "torch --index-url https://download.pytorch.org/whl/cpu"
+install_pkg petals
 
 # Firewall öffnen
 sudo ufw allow "$PORT/tcp"

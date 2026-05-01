@@ -16,7 +16,17 @@ sudo ufw delete allow "$PORT/tcp" 2>/dev/null
 # Petals und PyTorch deinstallieren (optional)
 read -p "Petals/PyTorch deinstallieren? (y/n): " CONFIRM
 if [ "$CONFIRM" = "y" ]; then
-    pip3 uninstall -y petals torch
+    # Installationsfunktion mit pipx-Fallback
+    uninstall_pkg() {
+        if pip3 uninstall -y "$1" 2>&1 | grep -q "externally-managed-environment"; then
+            echo "pip blockiert, versuche pipx..."
+            pipx uninstall "$1" || echo "Fehler: $1 konnte nicht deinstalliert werden"
+        else
+            echo "$1 erfolgreich deinstalliert"
+        fi
+    }
+    uninstall_pkg petals
+    uninstall_pkg torch
     echo "✅ Petals und PyTorch deinstalliert"
 fi
 
