@@ -1,5 +1,7 @@
 # Android Worker installieren
 
+> **Hinweis:** Android unterstützt KEIN Petals. Dieser Guide nutzt ausschließlich **llama.cpp**.
+
 ## Voraussetzungen
 - **Termux** aus F-Droid oder GitHub (**nicht** Play Store)
 - ~3 GB freier Speicher
@@ -12,15 +14,15 @@ In Termux eingeben:
 
 ```bash
 curl -o install.sh \
-  https://raw.githubusercontent.com/f2r6a0n2k/ki-lastverteilung-petals/main/scripts/install_petals_worker_termux.sh
+  https://raw.githubusercontent.com/f2r6a0n2k/ki-lastverteilung-petals/main/scripts/install_worker_termux.sh
 
 bash install.sh 8080
 ```
 
 Das Skript:
-- Installiert Build-Tools (`git`, `make`, `clang`)
-- Kompiliert llama.cpp aus dem Quellcode
-- Lädt das Llama-3.2-3B-Modell herunter (~2 GB)
+- Installiert Build-Tools (`git`, `cmake`, `clang`, `wget`) via `pkg`
+- Kompiliert llama.cpp mit **CMake** (Makefile wurde ersetzt)
+- Lädt das Llama-3.2-3B-Modell per **wget** direkt von HuggingFace (~2 GB)
 - Erstellt die Skripte `start_worker.sh`, `stop_worker.sh`, `worker_status.sh`
 - Startet den Worker automatisch
 
@@ -50,7 +52,7 @@ termux-wake-lock
 
 ```bash
 curl -o uninstall.sh \
-  https://raw.githubusercontent.com/f2r6a0n2k/ki-lastverteilung-petals/main/scripts/uninstall_petals_worker_termux.sh
+  https://raw.githubusercontent.com/f2r6a0n2k/ki-lastverteilung-petals/main/scripts/uninstall_worker_termux.sh
 
 bash uninstall.sh 8080
 ```
@@ -67,8 +69,10 @@ rm -f ~/llama-worker-*.log
 
 | Problem | Lösung |
 |---------|--------|
-| `make: command not found` | `pkg install make clang` |
-| `hf: command not found` | `pip install huggingface-hub` |
+| `cmake: command not found` | `pkg install cmake` |
+| `wget: command not found` | `pkg install wget` |
 | `curl: (7) Failed to connect` | Firewall prüfen, Port 8080 freischalten |
-| Modell-Download abbricht | WLAN-Verbindung prüfen, Skript erneut starten |
+| Modell-Download abbricht | WLAN-Verbindung prüfen, `wget --continue` nutzt teilgeladene Dateien |
 | Worker startet nicht | `tail -20 ~/llama-worker-8080.log` für Fehlerdetails |
+| `Makefile:6: Build system changed` | Nicht mehr relevant – Installer nutzt jetzt CMake |
+| `hf-xet` / `maturin` Build-Fehler | Nicht mehr relevant – Modell-Download per `wget` statt `hf` CLI |

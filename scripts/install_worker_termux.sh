@@ -2,15 +2,19 @@
 # llama.cpp Worker Installation für Android (Termux)
 # Verwendung: bash install_worker_termux.sh [PORT]
 # Beispiel: bash install_worker_termux.sh 8080
+#
+# HINWEIS: Android/Termux unterstützt KEIN Petals (nur llama.cpp).
+# Dieser Installer baut llama.cpp mit CMake und lädt Modelle per wget.
 
 PORT=${1:-8080}
 MODEL_NAME="Llama-3.2-3B-Instruct-Q4_K_M.gguf"
+MODEL_URL="https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/${MODEL_NAME}"
 
 echo "=== llama.cpp Worker Installation (Termux) ==="
 
 # Abhängigkeiten installieren
 echo "Installiere Abhängigkeiten..."
-pkg update && pkg install -y git make clang wget
+pkg update && pkg install -y git cmake clang wget
 
 # llama.cpp herunterladen und kompilieren
 echo "Kompiliere llama.cpp..."
@@ -23,18 +27,18 @@ else
     cd llama.cpp
 fi
 
-make -j$(nproc)
+# CMake Build (Makefile wurde durch CMake ersetzt)
+mkdir -p build && cd build
+cmake .. -DLLAMA_BUILD_SERVER=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build . -j$(nproc) --target llama-server
 
 # Modell-Verzeichnis erstellen
-mkdir -p models
+mkdir -p ~/llama.cpp/models
 
-# Modell herunterladen (falls noch nicht vorhanden)
+# Modell herunterladen (wget, NICHT huggingface-hub – hf-xet baut nicht auf Termux)
 if [ ! -f "models/${MODEL_NAME}" ]; then
     echo "Modell herunterladen (${MODEL_NAME}, ~2GB)..."
-    pip install huggingface-hub
-    hf download bartowski/Llama-3.2-3B-Instruct-GGUF \
-        --include "${MODEL_NAME}" \
-        --local-dir models/
+    wget --continue "${MODEL_URL}" -O "models/${MODEL_NAME}"
     echo "Modell gespeichert: models/${MODEL_NAME}"
 else
     echo "Modell bereits vorhanden: models/${MODEL_NAME}"

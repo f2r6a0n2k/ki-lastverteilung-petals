@@ -6,7 +6,7 @@
 - **Petals → llama.cpp:** Android-Worker nutzen jetzt llama.cpp statt Petals
 - **Grund:** Petals/PyTorch sind auf Android/Termux nicht kompatibel (keine ARM-Wheels, fehlende System-Bibliotheken)
 - **Neu:** Vollautomatische Installation – Skript kompiliert llama.cpp, lädt Modell herunter, startet Worker
-- **Neu:** `uninstall_petals_worker_termux.sh` für saubere Deinstallation
+- **Neu:** `uninstall_worker_termux.sh` für saubere Deinstallation
 
 ### Linux & Windows
 - **Unverändert:** Petals-basierte Installation bleibt bestehen
@@ -22,16 +22,18 @@
 
 Auf dem Android-Gerät in Termux:
 ```bash
-bash install_petals_worker_termux.sh 8080
+bash install_worker_termux.sh 8080
 ```
 
 Oder manuell:
 ```bash
-pkg install git make clang
+pkg install git cmake clang wget
 git clone https://github.com/ggerganov/llama.cpp
-cd llama.cpp && make -j$(nproc)
-hf download bartowski/Llama-3.2-3B-Instruct-GGUF --include "Llama-3.2-3B-Instruct-Q4_K_M.gguf" --local-dir models/
-./build/bin/llama-server -m models/Llama-3.2-3B-Instruct-Q4_K_M.gguf -c 1024 --port 8080 --host 0.0.0.0 -t $(nproc)
+cd llama.cpp && mkdir -p build && cd build
+cmake .. && cmake --build . -j$(nproc) --target llama-server
+mkdir -p ~/llama.cpp/models
+wget https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf -O models/Llama-3.2-3B-Instruct-Q4_K_M.gguf
+~/llama.cpp/build/bin/llama-server -m models/Llama-3.2-3B-Instruct-Q4_K_M.gguf -c 1024 --port 8080 --host 0.0.0.0 -t $(nproc)
 ```
 
 ## Voraussetzungen

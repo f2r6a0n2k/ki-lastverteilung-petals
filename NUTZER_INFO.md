@@ -96,12 +96,12 @@ KI_Lastverteilung_Petals/
 ├── docs/                 # Dokumentation
 │   └── lastverteilung_ki_netzwerk.md  # Hauptkonzept
 └── scripts/               # Skripte
-    ├── install_petals_worker_linux.sh    # Linux Worker-Installation
-    ├── install_petals_worker_termux.sh  # Android Worker-Installation
-    ├── install_petals_worker_windows.ps1 # Windows Worker-Installation
-    ├── uninstall_petals_worker_linux.sh # Linux Deinstallation
-    ├── uninstall_petals_worker_termux.sh # Android Deinstallation
-    ├── uninstall_petals_worker_windows.ps1 # Windows Deinstallation
+    ├── install_worker_linux.sh           # Linux Worker-Installation (Petals)
+    ├── install_worker_termux.sh          # Android Worker-Installation (llama.cpp)
+    ├── install_worker_windows.ps1        # Windows Worker-Installation (Petals)
+    ├── uninstall_worker_linux.sh         # Linux Deinstallation
+    ├── uninstall_worker_termux.sh        # Android Deinstallation
+    ├── uninstall_worker_windows.ps1      # Windows Deinstallation
     ├── start_worker.sh                   # Worker starten (Port wählbar)
     ├── monitor.sh                        # htop-Style Monitor ✅
     ├── llama_client.py                   # Einzelne Prompts (CLI)

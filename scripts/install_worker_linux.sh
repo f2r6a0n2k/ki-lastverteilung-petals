@@ -1,14 +1,14 @@
 #!/bin/bash
-# Petals Worker Installation für Linux (Ubuntu/Debian)
-# Verwendung: bash install_petals_worker_linux.sh [PORT] [MODELL]
-# Beispiel: bash install_petals_worker_linux.sh 8080 bartowski/Llama-3.2-3B-Instruct-GGUF
+# KI Worker Installation für Linux (Ubuntu/Debian)
+# Verwendung: bash install_worker_linux.sh [PORT] [MODELL]
+# Beispiel: bash install_worker_linux.sh 8080 bartowski/Llama-3.2-3B-Instruct-GGUF
 
 PORT=${1:-8080}
 MODEL=${2:-"bartowski/Llama-3.2-3B-Instruct-GGUF"}
-WORKER_NAME="Petals-Worker-$(hostname)-$PORT"
-INSTALL_DIR="$HOME/petals_worker"
+WORKER_NAME="KI-Worker-$(hostname)-$PORT"
+INSTALL_DIR="$HOME/ki_worker"
 
-echo "=== Petals Worker Installation (Linux) ==="
+echo "=== KI Worker Installation (Linux) ==="
 
 # Abhängigkeiten installieren
 sudo apt update && sudo apt install -y python3-pip python3-venv git curl
@@ -40,23 +40,23 @@ install_pkg petals
 sudo ufw allow "$PORT/tcp"
 
 # Start-Skript erstellen
-cat > "$HOME/start_petals_worker.sh" << INNER_EOF
+cat > "$HOME/start_ki_worker.sh" << INNER_EOF
 #!/bin/bash
 source "$INSTALL_DIR/venv/bin/activate"
 PORT=$PORT
 MODEL="$MODEL"
 WORKER_NAME="$WORKER_NAME"
-echo "Starte Petals Worker: \$WORKER_NAME auf Port \$PORT mit Modell: \$MODEL"
-python3 -m petals.cli.run_server \$MODEL --port \$PORT --public_name "\$WORKER_NAME" > /tmp/petals-worker-\$PORT.log 2>&1 &
-echo "Worker gestartet. Log: /tmp/petals-worker-\$PORT.log"
+echo "Starte KI Worker: \$WORKER_NAME auf Port \$PORT mit Modell: \$MODEL"
+python3 -m petals.cli.run_server \$MODEL --port \$PORT --public_name "\$WORKER_NAME" > /tmp/ki-worker-\$PORT.log 2>&1 &
+echo "Worker gestartet. Log: /tmp/ki-worker-\$PORT.log"
 INNER_EOF
-chmod +x "$HOME/start_petals_worker.sh"
+chmod +x "$HOME/start_ki_worker.sh"
 
 # Worker starten
-bash "$HOME/start_petals_worker.sh"
+bash "$HOME/start_ki_worker.sh"
 
-echo "✅ Petals Worker läuft auf Port $PORT"
+echo "✅ KI Worker läuft auf Port $PORT"
 echo "   Modell: $MODEL"
 echo "   Name: $WORKER_NAME"
-echo "   Log: /tmp/petals-worker-$PORT.log"
+echo "   Log: /tmp/ki-worker-$PORT.log"
 echo "   Stoppen: pkill -f 'petals.cli.run_server.*$PORT'"

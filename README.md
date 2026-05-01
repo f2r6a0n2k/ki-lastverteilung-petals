@@ -15,8 +15,8 @@ KI_Lastverteilung_Petals/
 │   ├── chat_interface.py         # Chat mit Verlauf
 │   ├── monitor.sh                # Echtzeit-Monitoring (htop-Style)
 │   ├── setup_credentials.sh      # Einmalige Einrichtung der SSH-Credentials
-│   ├── install_petals_worker_*.sh # Worker-Installer (Linux/Termux)
-│   └── uninstall_petals_worker_*.sh
+│   ├── install_worker_*.sh       # Worker-Installer (Linux/Termux)
+│   └── uninstall_worker_*.sh     # Worker-Deinstallation
 ```
 
 ## Schnellstart
@@ -43,14 +43,53 @@ Erstellt `credentials.json` (wird von Git ignoriert). Alternativ manuell erstell
 
 ```bash
 cd ~/Dokumente/KI_Lastverteilung_Petals
-~/petals-env/bin/python scripts/koordinator.py &
+python3 scripts/koordinator.py &
 ```
+
+**Hinweis:** Verwende `python3` (System-Python), NICHT `~/petals-env/bin/python` – die virtuelle Umgebung hat einen Pydantic-Konflikt (Petals braucht v1, FastAPI v2).
 
 Der Koordinator scannt automatisch das Netzwerk und entscheidet:
 - **≥2 Nodes mit Petals + gute Latenz** → Petals-Modus (verteilte Inferenz)
 - **Sonst** → llama.cpp-Modus (parallele Worker mit Score-basierter Auswahl)
 
-### 3. OpenCode-Integration
+### 3. Worker installieren
+
+#### Linux (Ubuntu/Debian) – Petals oder llama.cpp
+
+```bash
+bash scripts/install_worker_linux.sh [PORT] [MODELL]
+# Beispiel:
+bash scripts/install_worker_linux.sh 8080 bartowski/Llama-3.2-3B-Instruct-GGUF
+```
+
+Installiert Petals mit PyTorch (CPU). Der Worker stellt ein vollständiges Modell-Layer-Partitionierung bereit.
+
+#### Android (Termux) – nur llama.cpp
+
+> **Wichtig:** Android unterstützt KEIN Petals (nur llama.cpp). Verwende diesen Installer für Android-Geräte.
+
+```bash
+bash scripts/install_worker_termux.sh [PORT]
+# Beispiel:
+bash scripts/install_worker_termux.sh 8080
+```
+
+**Was passiert:**
+1. Installiert `cmake`, `clang`, `git`, `wget` via `pkg`
+2. Klont und kompiliert llama.cpp mit **CMake** (Makefile wurde ersetzt)
+3. Lädt das Modell per **wget** direkt von HuggingFace (nicht `hf` CLI – hf-xet baut nicht auf Termux)
+4. Erstellt `start_worker.sh`, `stop_worker.sh`, `worker_status.sh`
+
+**Bekannte Probleme (umgangen):**
+- ❌ `aarch64-unknown-linux-android` → Rust/hf-xet baut nicht auf Termux → Modell-Download per wget
+- ❌ `Makefile build replaced by CMake` → Build-System auf CMake umgestellt
+- ❌ Petals auf Android → Nicht möglich, nur llama.cpp
+
+#### Windows
+
+Windows-Unterstützung ist in Arbeit. Für Petals verwende WSL2.
+
+### 4. OpenCode-Integration
 
 Der Koordinator unterstützt OpenAI-kompatible Endpunkte und kann direkt mit OpenCode genutzt werden.
 
@@ -89,7 +128,7 @@ Erstelle `~/.config/opencode/opencode.json`:
 
 ```bash
 # Koordinator muss laufen
-~/petals-env/bin/python scripts/koordinator.py &
+python3 scripts/koordinator.py &
 
 # OpenCode im Projekt starten
 cd /dein/projekt
@@ -103,7 +142,7 @@ Im TUI: `/models` → Wähle `KI-Lastverteilung (Auto)`.
 
 **Hinweis:** Der `/connect`-Befehl ist nicht nötig – der Koordinator benötigt keine API-Keys für den lokalen Zugriff.
 
-### 4. Anfragen senden
+### 5. Anfragen senden
 
 ```bash
 # Über Koordinator (empfohlen)
@@ -120,7 +159,7 @@ curl -X POST http://192.168.178.109:5000/v1/chat/completions \
   -d '{"messages": [{"role": "user", "content": "Hallo!"}]}'
 ```
 
-### 4. Monitoring
+### 6. Monitoring
 
 ```bash
 bash scripts/monitor.sh
@@ -169,6 +208,15 @@ Wenn ≥2 Nodes mit SSH-Zugang und ≥4 GB RAM gefunden werden:
 - **Berechtigung `600`** für credentials.json (nur Besitzer lesbar)
 
 ## Release-Änderungen
+
+### v3.1 – Termux/Android-Installer korrigiert
+
+**Fixes:**
+- ❌ `hf-xet` Rust-Build-Fehler auf Termux → Modell-Download per `wget` statt `hf` CLI
+- ❌ `Makefile replaced by CMake` → llama.cpp Build auf CMake umgestellt
+- ❌ Android unterstützt kein Petals → Installer auf llama.cpp-only umgestellt
+- ❌ Verwirrende Namensgebung "petals" bei Termux-Skripten → Umbenennung zu `install_worker_*.sh`
+- ✅ Koordinator startet nun mit `python3` (System-Python) statt `petals-env`
 
 ### v3.0 – Intelligente Lastverteilung mit Auto-Erkennung
 

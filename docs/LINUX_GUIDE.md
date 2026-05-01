@@ -74,10 +74,10 @@ Sollte `{"status":"ok"}` zurückgeben.
 ### Automatisiert (mit Projekt-Skript)
 
 ```bash
-bash scripts/install_petals_worker_linux.sh 8080
+bash scripts/install_worker_linux.sh 8080
 ```
 
-**Achtung:** Dieses Skript installiert Petals. Für llama.cpp nutze Option A oben.
+**Hinweis:** Dieses Skript installiert Petals mit PyTorch. Für manuelles llama.cpp-Setup nutze Option A oben.
 
 ---
 

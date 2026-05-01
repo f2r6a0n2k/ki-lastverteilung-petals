@@ -1,10 +1,10 @@
 #!/bin/bash
-# Petals Worker Deinstallation für Linux
-# Verwendung: bash uninstall_petals_worker_linux.sh [PORT]
-# Beispiel: bash uninstall_petals_worker_linux.sh 8080
+# KI Worker Deinstallation für Linux
+# Verwendung: bash uninstall_worker_linux.sh [PORT]
+# Beispiel: bash uninstall_worker_linux.sh 8080
 
 PORT=${1:-8080}
-echo "=== Petals Worker Deinstallation (Linux) ==="
+echo "=== KI Worker Deinstallation (Linux) ==="
 
 # Worker stoppen
 pkill -f "petals.cli.run_server.*$PORT"
@@ -30,4 +30,7 @@ if [ "$CONFIRM" = "y" ]; then
     echo "✅ Petals und PyTorch deinstalliert"
 fi
 
-echo "✅ Petals Worker auf Port $PORT deinstalliert"
+# Start-Skript entfernen
+rm -f ~/start_ki_worker.sh
+
+echo "✅ KI Worker auf Port $PORT deinstalliert"
