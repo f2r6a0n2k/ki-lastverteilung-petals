@@ -6,9 +6,9 @@ cd ~/llama.cpp
 pkill -f llama-server 2>/dev/null
 sleep 2
 
-echo "Starte llama-server (TinyLlama-1.1B) auf Port 8080..."
+echo "Starte llama-server (Llama-3.2-3B-Instruct) auf Port 8080..."
 nohup ./build/bin/llama-server \
-  -m models/tinyllama-q4.gguf \
+  -m models/Llama-3.2-3B-Instruct-Q4_K_M.gguf \
   -c 1024 \
   --port 8080 \
   --host 0.0.0.0 \

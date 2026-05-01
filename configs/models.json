@@ -1,11 +1,11 @@
 {
   "models": [
     {
-      "name": "TinyLlama-1.1B",
-      "id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-      "description": "Kleines Modell, für schwache Hardware (1.1B Parameter)",
+      "name": "Llama-3.2-3B-Instruct",
+      "id": "bartowski/Llama-3.2-3B-Instruct-GGUF",
+      "description": "Standardmodell, gute Qualität bei moderater Größe (3B Parameter, Q4_K_M ~2GB)",
       "min_devices": 1,
-      "memory_per_device": "0.7GB",
+      "memory_per_device": "2GB",
       "petals_support": true
     },
     {
@@ -25,5 +25,5 @@
       "petals_support": true
     }
   ],
-  "default_model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+  "default_model": "bartowski/Llama-3.2-3B-Instruct-GGUF"
 }

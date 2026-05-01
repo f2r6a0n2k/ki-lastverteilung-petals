@@ -1,10 +1,10 @@
 # Petals Worker Installation für Windows (PowerShell - als Administrator)
 # Verwendung: .\install_petals_worker_windows.ps1 [PORT] [MODELL]
-# Beispiel: .\install_petals_worker_windows.ps1 8080 meta-llama/Llama-2-7b-chat-hf
+# Beispiel: .\install_petals_worker_windows.ps1 8080 bartowski/Llama-3.2-3B-Instruct-GGUF
 
 param(
     [int]$Port = 8080,
-    [string]$Model = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+    [string]$Model = "bartowski/Llama-3.2-3B-Instruct-GGUF"
 )
 
 $WORKER_NAME = "Petals-Worker-Windows-$Port"

@@ -1,10 +1,10 @@
 #!/bin/bash
 # Petals Worker Installation für Linux (Ubuntu/Debian)
 # Verwendung: bash install_petals_worker_linux.sh [PORT] [MODELL]
-# Beispiel: bash install_petals_worker_linux.sh 8080 meta-llama/Llama-2-7b-chat-hf
+# Beispiel: bash install_petals_worker_linux.sh 8080 bartowski/Llama-3.2-3B-Instruct-GGUF
 
 PORT=${1:-8080}
-MODEL=${2:-"TinyLlama/TinyLlama-1.1B-Chat-v1.0"}
+MODEL=${2:-"bartowski/Llama-3.2-3B-Instruct-GGUF"}
 WORKER_NAME="Petals-Worker-$(hostname)-$PORT"
 INSTALL_DIR="$HOME/petals_worker"
 

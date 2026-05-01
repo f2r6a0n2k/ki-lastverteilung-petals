@@ -6,7 +6,7 @@
 1. **llama.cpp Worker** (Round-Robin Lastverteilung)
    - **Elitebook** (192.168.178.105:8080) – ✅ AKTIV
    - **Lokal** (192.168.178.109:8081) – ✅ AKTIV
-   - **Modell:** TinyLlama-1.1B-Chat (Q4_K_M, ~700MB)
+   - **Modell:** Llama-3.2-3B-Instruct (Q4_K_M, ~2 GB)
    - **System:** Ganze Prompts werden abwechselnd an Worker gesendet
 
 2. **Monitor** (htop-Style, flackerfrei)
@@ -25,7 +25,7 @@
 
 ### ❌ FUNKTIONIERT (noch) NICHT:
 - **Petals** (echte Lastverteilung – Prompt auf mehrere Rechner aufgeteilt)
-  - **Grund:** Inkompatibilität mit Python 3.12 und PyTorch 2.11
+  - **Grund:** Inkompatibilität mit Python 3.12 und PyTorch
   - **Status:** Projekt ist fertig gebaut, aber nicht lauffähig
   - **GitHub:** https://github.com/f2r6a0n2k/ki-lastverteilung-petals
 
@@ -51,32 +51,18 @@
    https://github.com/f2r6a0n2k/ki-lastverteilung-petals  
    - Enthält: Installationsskripte (Linux, Windows, Android), Deinstallationsskripte, Monitor, Client, Video-Guide
 
----
-
-## Start-Skripte (für Worker):
-
-1. **Elitebook (192.168.178.105:8080):**
-   - Skript auf Elitebook: `/home/user/start_elitebook_worker.sh`
-   - Lokal kopiert: `/home/frank/Dokumente/KI_Lastverteilung_Petals/scripts/start_elitebook_worker.sh`
-   - Ausführen auf Elitebook: `bash ~/start_elitebook_worker.sh`
-   - Oder via SSH: `ssh user@192.168.178.105 'bash ~/start_elitebook_worker.sh'`
-
-2. **Lokal (192.168.178.109:8081):**
-   - Skript lokal: `/home/frank/start_local_worker.sh`
-   - Ausführen: `bash ~/start_local_worker.sh`
-
 ## Schnellstart (so nutzt Du das System):
 
 ### 1. Worker starten (falls nicht aktiv):
 **Lokal (192.168.178.109:8081):**
 ```bash
-cd ~/llama.cpp && nohup ./build/bin/llama-server -m models/tinyllama-q4.gguf -c 1024 --port 8081 --host 0.0.0.0 -t $(nproc) > /tmp/llama-8081.log 2>&1 &
+cd ~/llama.cpp && nohup ./build/bin/llama-server -m models/Llama-3.2-3B-Instruct-Q4_K_M.gguf -c 1024 --port 8081 --host 0.0.0.0 -t $(nproc) > /tmp/llama-8081.log 2>&1 &
 ```
 
 **Elitebook (192.168.178.105:8080):**
 ```bash
 # Auf Elitebook ausführen:
-cd ~/llama.cpp && nohup ./build/bin/llama-server -m models/tinyllama-q4.gguf -c 1024 --port 8080 --host 0.0.0.0 -t $(nproc) > /tmp/llama-8080.log 2>&1 &
+cd ~/llama.cpp && nohup ./build/bin/llama-server -m models/Llama-3.2-3B-Instruct-Q4_K_M.gguf -c 1024 --port 8080 --host 0.0.0.0 -t $(nproc) > /tmp/llama-8080.log 2>&1 &
 # Oder einfach das Start-Skript nutzen:
 bash ~/start_elitebook_worker.sh
 ```
@@ -105,7 +91,7 @@ python3 /home/frank/Dokumente/KI_Lastverteilung_Petals/scripts/llama_client.py "
    - Oder verwende `--break-system-packages`: `python3 -m pip install --break-system-packages PAKET`
 3. **Elitebook-Worker neustarten:** Falls er inaktiv ist:
    ```bash
-   sshpass -p "cornholio" ssh user@192.168.178.105 "cd ~/llama.cpp && pkill -f llama-server; nohup ./build/bin/llama-server -m models/tinyllama-q4.gguf -c 1024 --port 8080 --host 0.0.0.0 -t \$(nproc) > /tmp/llama-8080.log 2>&1 &"
+   sshpass -p "cornholio" ssh user@192.168.178.105 "cd ~/llama.cpp && pkill -f llama-server; nohup ./build/bin/llama-server -m models/Llama-3.2-3B-Instruct-Q4_K_M.gguf -c 1024 --port 8080 --host 0.0.0.0 -t \$(nproc) > /tmp/llama-8080.log 2>&1 &"
    ```
 4. **Monitor zeigt alte Daten:** Falls der Monitor nicht aktualisiert, schließe ihn mit `Ctrl+C` und starte ihn neu.
 
@@ -122,8 +108,7 @@ KI_Lastverteilung_Petals/
 ├── configs/              # Modell-Konfiguration (für Petals)
 │   └── models.json
 ├── docs/                 # Dokumentation
-│   ├── lastverteilung_ki_netzwerk.md  # Hauptkonzept
-│   └── PROJEKT_STATUS.md             # Status-Übersicht
+│   └── lastverteilung_ki_netzwerk.md  # Hauptkonzept
 └── scripts/               # Skripte
     ├── install_petals_worker_linux.sh    # Linux Worker-Installation
     ├── install_petals_worker_termux.sh  # Android Worker-Installation
@@ -132,7 +117,8 @@ KI_Lastverteilung_Petals/
     ├── uninstall_petals_worker_termux.sh # Android Deinstallation
     ├── uninstall_petals_worker_windows.ps1 # Windows Deinstallation
     ├── monitor.sh                 # htop-Style Monitor ✅
-    └── llama_client.py             # Round-Robin Client ✅ (nicht petals_client.py!)
+    ├── llama_client.py             # Round-Robin Client ✅ (nicht petals_client.py!)
+    └── chat.sh                    # Interaktives Chat-Interface ✅
 ```
 
 ✅ **System ist einsatzbereit!** Starte den Monitor und teste die Lastverteilung.
