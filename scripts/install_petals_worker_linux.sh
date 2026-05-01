@@ -6,13 +6,24 @@
 PORT=${1:-8080}
 MODEL=${2:-"TinyLlama/TinyLlama-1.1B-Chat-v1.0"}
 WORKER_NAME="Petals-Worker-$(hostname)-$PORT"
+INSTALL_DIR="$HOME/petals_worker"
 
 echo "=== Petals Worker Installation (Linux) ==="
-sudo apt update && sudo apt install -y python3-pip git curl
+
+# Abhängigkeiten installieren
+sudo apt update && sudo apt install -y python3-pip python3-venv git curl
+
+# Installationsverzeichnis erstellen
+mkdir -p "$INSTALL_DIR"
+cd "$INSTALL_DIR"
+
+# Virtuelle Umgebung erstellen
+python3 -m venv venv
+source venv/bin/activate
 
 # Petals und PyTorch installieren (CPU-Version)
-pip3 install --upgrade pip
-pip3 install petals torch --index-url https://download.pytorch.org/whl/cpu
+pip install --upgrade pip
+pip install petals torch --index-url https://download.pytorch.org/whl/cpu
 
 # Firewall öffnen
 sudo ufw allow "$PORT/tcp"
@@ -20,6 +31,7 @@ sudo ufw allow "$PORT/tcp"
 # Start-Skript erstellen
 cat > "$HOME/start_petals_worker.sh" << INNER_EOF
 #!/bin/bash
+source "$INSTALL_DIR/venv/bin/activate"
 PORT=$PORT
 MODEL="$MODEL"
 WORKER_NAME="$WORKER_NAME"
@@ -35,4 +47,5 @@ bash "$HOME/start_petals_worker.sh"
 echo "✅ Petals Worker läuft auf Port $PORT"
 echo "   Modell: $MODEL"
 echo "   Name: $WORKER_NAME"
-echo "   Test: curl http://localhost:$PORT/health (falls verfügbar)"
+echo "   Log: /tmp/petals-worker-$PORT.log"
+echo "   Stoppen: pkill -f 'petals.cli.run_server.*$PORT'"
