@@ -23,13 +23,12 @@ scan_network() {
     '
 }
 
-# CPU aus /proc/stat (zwei Messungen für Delta)
+# CPU aus top (parse idle-Wert -> 100-idle = Auslastung)
 local_stats() {
-    read -r _ u1 _ _ i1 _ _ _ _ _ < /proc/stat
-    sleep 0.2
-    read -r _ u2 _ _ i2 _ _ _ _ _ < /proc/stat
-    local du=$((u2 - u1)) di=$((i2 - i1)) dt=$((du + di))
-    local cpu=$((dt > 0 ? du * 100 / dt : 0))
+    local idle=$(top -b -n1 2>/dev/null | grep '^%Cpu' | grep -oP '[0-9,]+(?=\s*id)' | tr ',' '.' | awk '{printf "%.0f", $1}')
+    idle=${idle:-100}
+    local cpu=$((100 - idle))
+    [ $cpu -lt 0 ] && cpu=0
     local ram=$(free | awk '/^Mem:/{printf "%.0f", $3/$2*100}')
     echo "$cpu $ram"
 }
@@ -64,7 +63,11 @@ while true; do
     for key in "${!known_workers[@]}"; do
         IFS=':' read -r ip port <<< "$key"
 
-        w "${BLUE}📍 ${ip}:${port}${RESET}"
+        if [ "$ip" = "$LOCAL_IP" ] || [ "$ip" = "127.0.0.1" ]; then
+            w "${BLUE}📍 ${ip}:${port} (lokal)${RESET}"
+        else
+            w "${BLUE}📍 ${ip}:${port}${RESET}"
+        fi
 
         if curl -s --connect-timeout 0.3 "http://${ip}:${port}/health" >/dev/null 2>&1; then
             w "   Status: ${GREEN}✅ AKTIV${RESET}"
@@ -73,16 +76,8 @@ while true; do
                 read -r cpu ram <<< "$(local_stats)"
                 w "   ${BLUE}CPU:${RESET} ${cpu}%  ${BLUE}RAM:${RESET} ${ram}%"
             else
-                stats=$(timeout 3 sshpass -p "cornholio" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=1 "user@${ip}" bash <<'REMOTE'
-cpu() { awk '/^cpu /{print $2+$3+$4+$7+$8+$9, $5+$6}' /proc/stat; }
-r1=$(cpu); sleep 0.2; r2=$(cpu)
-b1=${r1%% *}; b2=${r2%% *}
-i1=${r1##* }; i2=${r2##* }
-du=$((b2-b1)); di=$((i2-i1)); dt=$((du+di))
-p=$((dt>0?du*100/dt:0))
-m=$(free | awk '/^Mem:/{printf "%.0f",$3/$2*100}')
-echo "$p $m"
-REMOTE
+                stats=$(timeout 3 sshpass -p "cornholio" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=1 "user@${ip}" \
+                    "idle=\$(top -b -n1 2>/dev/null | grep '^%Cpu' | grep -oP '[0-9,]+(?=\s*id)' | tr ',' '.'); idle=\${idle:-100}; idle=\${idle%%.*}; cpu=\$((100-idle)); [ \$cpu -lt 0 ] && cpu=0; ram=\$(free | awk '/^Mem:/{printf \"%.0f\",\$3/\$2*100}'); echo \"\$cpu \$ram\"")
                 if [ -n "$stats" ]; then
                     read -r cpu ram <<< "$stats"
                     w "   ${BLUE}CPU:${RESET} ${cpu}%  ${BLUE}RAM:${RESET} ${ram}%"
