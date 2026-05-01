@@ -1,25 +1,28 @@
-# KI-Lastverteilung Petals - Nutzer-Informationen
+# KI-Lastverteilung - Nutzer-Informationen
 
 ## Projekt-Stand (Mai 2026)
 
 ### ✅ FUNKTIONIERT (einsatzbereit):
 1. **llama.cpp Worker** (Round-Robin Lastverteilung)
-   - **Elitebook** (192.168.178.105:8080) – ✅ AKTIV
-   - **Lokal** (192.168.178.109:8081) – ✅ AKTIV
+   - **Worker:** Konfigurierbar über `configs/workers.json`
    - **Modell:** Llama-3.2-3B-Instruct (Q4_K_M, ~2 GB)
    - **System:** Ganze Prompts werden abwechselnd an Worker gesendet
 
 2. **Monitor** (htop-Style, flackerfrei)
    - **Datei:** `scripts/monitor.sh`
-   - **Start:** `bash /home/frank/Dokumente/KI_Lastverteilung_Petals/scripts/monitor.sh`
-   - **Features:** Zeigt CPU-Last, Worker-Status, Inferenz-Zeiten; aktualisiert alle 2s
+   - **Start:** `bash scripts/monitor.sh`
+   - **Features:** Scannt automatisch das Netzwerk, zeigt CPU-Last, Worker-Status; aktualisiert alle 2s
    - **Beenden:** `Ctrl+C` (stellt Originalbildschirm wieder her)
 
 3. **Client** (Round-Robin)
-   - **Datei:** `scripts/llama_client.py` ← **WICHTIG: Nicht `petals_client.py` nutzen!**
-   - **Verwendung:** `python3 /home/frank/Dokumente/KI_Lastverteilung_Petals/scripts/llama_client.py "Deine Frage" [--max-tokens ZAHL]`
-   - **Beispiel:** `python3 scripts/llama_client.py "Wie ist das Wetter?"`
-   - **Hinweis:** Prompts werden automatisch zwischen Elitebook (8080) und Lokal (8081) verteilt!
+   - **Datei:** `scripts/llama_client.py`
+   - **Verwendung:** `python3 scripts/llama_client.py "Deine Frage" [--max-tokens ZAHL]`
+   - **Hinweis:** Worker werden aus `configs/workers.json` gelesen und automatisch im Round-Robin verteilt!
+
+4. **Chat-Interface** (interaktiv)
+   - **Datei:** `scripts/chat.sh`
+   - **Start:** `bash scripts/chat.sh`
+   - **Features:** Runde für Runde Eingabe, Worker-Wechsel automatisch
 
 ---
 
@@ -31,69 +34,62 @@
 
 ---
 
-## Start-Skripte (für Worker):
+## Worker starten:
 
-1. **Elitebook (192.168.178.105:8080):**
-   - Datei auf Elitebook: `/home/user/start_elitebook_worker.sh`
-   - Datei im Projekt: `/home/frank/Dokumente/KI_Lastverteilung_Petals/scripts/start_elitebook_worker.sh`
-   - Ausführen auf Elitebook: `bash ~/start_elitebook_worker.sh`
-   - Oder via SSH: `ssh user@192.168.178.105 'bash ~/start_elitebook_worker.sh'`
+Auf jedem Worker-Gerät:
+```bash
+bash scripts/start_worker.sh [PORT]
+# Beispiel:
+bash scripts/start_worker.sh 8080
+```
 
-2. **Lokal (192.168.178.109:8081):**
-   - Datei lokal: `/home/frank/start_local_worker.sh`
-   - Ausführen: `bash ~/start_local_worker.sh`
-
-## GitHub-Repositories:
-1. **ki-lastverteilung-worker** (llama.cpp Lösung – einfache Lastverteilung)  
-   https://github.com/f2r6a0n2k/ki-lastverteilung-worker
-   
-2. **ki-lastverteilung-petals** (Petals – echte Lastverteilung) ← **aktuelles Projekt**  
-   https://github.com/f2r6a0n2k/ki-lastverteilung-petals  
-   - Enthält: Installationsskripte (Linux, Windows, Android), Deinstallationsskripte, Monitor, Client, Video-Guide
+Oder manuell:
+```bash
+cd ~/llama.cpp && nohup ./build/bin/llama-server -m models/Llama-3.2-3B-Instruct-Q4_K_M.gguf -c 1024 --port 8080 --host 0.0.0.0 -t $(nproc) > /tmp/llama-8080.log 2>&1 &
+```
 
 ## Schnellstart (so nutzt Du das System):
 
-### 1. Worker starten (falls nicht aktiv):
-**Lokal (192.168.178.109:8081):**
-```bash
-cd ~/llama.cpp && nohup ./build/bin/llama-server -m models/Llama-3.2-3B-Instruct-Q4_K_M.gguf -c 1024 --port 8081 --host 0.0.0.0 -t $(nproc) > /tmp/llama-8081.log 2>&1 &
+### 1. Worker konfigurieren
+
+Bearbeite `configs/workers.json` und trage alle Worker ein:
+```json
+{
+  "workers": [
+    {"url": "http://192.168.1.100:8080", "name": "Server 1"},
+    {"url": "http://192.168.1.101:8080", "name": "Server 2"}
+  ]
+}
 ```
 
-**Elitebook (192.168.178.105:8080):**
+### 2. Worker starten (auf jedem Gerät)
+
 ```bash
-# Auf Elitebook ausführen:
-cd ~/llama.cpp && nohup ./build/bin/llama-server -m models/Llama-3.2-3B-Instruct-Q4_K_M.gguf -c 1024 --port 8080 --host 0.0.0.0 -t $(nproc) > /tmp/llama-8080.log 2>&1 &
-# Oder einfach das Start-Skript nutzen:
-bash ~/start_elitebook_worker.sh
+bash scripts/start_worker.sh 8080
 ```
 
-### 2. Monitor starten (htop-Style):
+### 3. Monitor starten (htop-Style):
 ```bash
-bash /home/frank/Dokumente/KI_Lastverteilung_Petals/scripts/monitor.sh
+bash scripts/monitor.sh
 ```
 - Mit `Ctrl+C` beenden (stellt Bildschirm wieder her)
 
-### 3. Prompt senden (Lastverteilung testen):
+### 4. Prompt senden (Lastverteilung testen):
 ```bash
-# WICHTIG: llama_client.py verwenden (nie petals_client.py!)
-python3 /home/frank/Dokumente/KI_Lastverteilung_Petals/scripts/llama_client.py "Wie ist das Wetter?"
-python3 /home/frank/Dokumente/KI_Lastverteilung_Petals/scripts/llama_client.py "Erkläre KI" --max-tokens 50
+python3 scripts/llama_client.py "Wie ist das Wetter?"
+python3 scripts/llama_client.py "Erkläre KI" --max-tokens 50
 ```
-→ Prompts werden automatisch abwechselnd an Elitebook (8080) und Lokal (8081) gesendet!
+→ Prompts werden automatisch abwechselnd an alle konfigurierten Worker gesendet!
 
 ---
 
 ## WICHTIGE Hinweise:
 
-1. **Immer `llama_client.py` verwenden** – `petals_client.py` existiert nicht mehr bzw. ist nicht funktionsfähig!
+1. **Worker konfigurieren:** Alle Worker-URLs werden in `configs/workers.json` eingetragen. Keine festen IPs im Code!
 2. **pip-Problem auf Ubuntu 24.04:** Falls `pip install` mit `externally-managed-environment` fehlschlägt:
    - Installiere `pipx`: `sudo apt install pipx`
    - Oder verwende `--break-system-packages`: `python3 -m pip install --break-system-packages PAKET`
-3. **Elitebook-Worker neustarten:** Falls er inaktiv ist:
-   ```bash
-   sshpass -p "cornholio" ssh user@192.168.178.105 "cd ~/llama.cpp && pkill -f llama-server; nohup ./build/bin/llama-server -m models/Llama-3.2-3B-Instruct-Q4_K_M.gguf -c 1024 --port 8080 --host 0.0.0.0 -t \$(nproc) > /tmp/llama-8080.log 2>&1 &"
-   ```
-4. **Monitor zeigt alte Daten:** Falls der Monitor nicht aktualisiert, schließe ihn mit `Ctrl+C` und starte ihn neu.
+3. **Monitor zeigt alte Daten:** Falls der Monitor nicht aktualisiert, schließe ihn mit `Ctrl+C` und starte ihn neu.
 
 ---
 
@@ -105,8 +101,9 @@ python3 /home/frank/Dokumente/KI_Lastverteilung_Petals/scripts/llama_client.py "
 ## Projektstruktur:
 ```
 KI_Lastverteilung_Petals/
-├── configs/              # Modell-Konfiguration (für Petals)
-│   └── models.json
+├── configs/              # Konfigurationsdateien
+│   ├── models.json       # Modell-Konfiguration
+│   └── workers.json      # Worker-URLs (hier anpassen!)
 ├── docs/                 # Dokumentation
 │   └── lastverteilung_ki_netzwerk.md  # Hauptkonzept
 └── scripts/               # Skripte
@@ -116,9 +113,10 @@ KI_Lastverteilung_Petals/
     ├── uninstall_petals_worker_linux.sh # Linux Deinstallation
     ├── uninstall_petals_worker_termux.sh # Android Deinstallation
     ├── uninstall_petals_worker_windows.ps1 # Windows Deinstallation
-    ├── monitor.sh                 # htop-Style Monitor ✅
-    ├── llama_client.py             # Round-Robin Client ✅ (nicht petals_client.py!)
-    └── chat.sh                    # Interaktives Chat-Interface ✅
+    ├── start_worker.sh                   # Worker starten (Port wählbar)
+    ├── monitor.sh                        # htop-Style Monitor ✅
+    ├── llama_client.py                   # Round-Robin Client ✅
+    └── chat.sh                           # Interaktives Chat-Interface ✅
 ```
 
-✅ **System ist einsatzbereit!** Starte den Monitor und teste die Lastverteilung.
+✅ **System ist einsatzbereit!** Konfiguriere deine Worker in `configs/workers.json` und starte den Monitor.

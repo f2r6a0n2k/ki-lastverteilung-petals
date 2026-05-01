@@ -1,0 +1,12 @@
+{
+  "workers": [
+    {
+      "url": "http://localhost:8080",
+      "name": "Worker 1"
+    },
+    {
+      "url": "http://localhost:8081",
+      "name": "Worker 2"
+    }
+  ]
+}

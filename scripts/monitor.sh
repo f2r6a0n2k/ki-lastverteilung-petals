@@ -19,9 +19,10 @@ tput smcup 2>/dev/null
 tput civis 2>/dev/null
 
 LOCAL_IP=$(hostname -I | awk '{print $1}')
+LOCAL_SUBNET=$(echo "$LOCAL_IP" | cut -d. -f1-3)
 
 scan_network() {
-    nmap -p 8080-8089 --open -T4 192.168.178.0/24 2>/dev/null | awk '
+    nmap -p 8080-8089 --open -T4 "${LOCAL_SUBNET}.0/24" 2>/dev/null | awk '
         /\([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\)/ {
             match($0, /\(([0-9.]+)\)/, a)
             ip = a[1]
@@ -69,7 +70,7 @@ while true; do
             if [ "$ip" = "$LOCAL_IP" ] || [ "$ip" = "127.0.0.1" ]; then
                 CPU=$(top -b -n1 2>/dev/null | grep '^%Cpu')
             else
-                CPU=$(sshpass -p "cornholio" ssh -o StrictHostKeyChecking=no user@"${ip}" "top -b -n1 2>/dev/null | grep '^%Cpu'" 2>/dev/null)
+                CPU=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=1 "${ip}" "top -b -n1 2>/dev/null | grep '^%Cpu'" 2>/dev/null)
             fi
 
             w "${BLUE}📍 ${ip}:${port}${RESET}"

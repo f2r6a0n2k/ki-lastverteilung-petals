@@ -10,13 +10,18 @@ import os
 import sys
 import tempfile
 
-WORKERS = [
-    "http://192.168.178.105:8080",
-    "http://192.168.178.109:8081"
-]
+CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "configs", "workers.json")
 STATE_FILE = os.path.join(tempfile.gettempdir(), "llama_rr_state")
 
-def get_next_worker():
+def load_workers():
+    if not os.path.exists(CONFIG_FILE):
+        print(f"Fehler: Konfigurationsdatei nicht gefunden: {CONFIG_FILE}")
+        sys.exit(1)
+    with open(CONFIG_FILE, "r") as f:
+        config = json.load(f)
+    return [w["url"] for w in config["workers"]]
+
+def get_next_worker(workers):
     idx = 0
     if os.path.exists(STATE_FILE):
         try:
@@ -24,18 +29,19 @@ def get_next_worker():
                 idx = int(f.read().strip())
         except (ValueError, IOError):
             idx = 0
-    worker = WORKERS[idx % len(WORKERS)]
+    worker = workers[idx % len(workers)]
     with open(STATE_FILE, "w") as f:
-        f.write(str((idx + 1) % len(WORKERS)))
+        f.write(str((idx + 1) % len(workers)))
     return worker
 
 def main():
-    parser = argparse.ArgumentParser(description='llama.cpp Client für KI-Lastverteilung')
-    parser.add_argument('prompt', nargs='?', default='Hello!', help='Der Prompt für die KI')
-    parser.add_argument('--max-tokens', type=int, default=100, help='Maximale Anzahl Token')
+    parser = argparse.ArgumentParser(description="llama.cpp Client für KI-Lastverteilung")
+    parser.add_argument("prompt", nargs="?", default="Hello!", help="Der Prompt für die KI")
+    parser.add_argument("--max-tokens", type=int, default=100, help="Maximale Anzahl Token")
     args = parser.parse_args()
 
-    worker = get_next_worker()
+    workers = load_workers()
+    worker = get_next_worker(workers)
 
     print(f"=== llama.cpp Client ===")
     print(f"Worker: {worker}")
@@ -51,10 +57,10 @@ def main():
         )
         result = resp.json()
         print(f"\n=== Antwort ===")
-        if 'content' in result:
-            print(result['content'])
-        elif 'response' in result:
-            print(result['response'])
+        if "content" in result:
+            print(result["content"])
+        elif "response" in result:
+            print(result["response"])
         else:
             print(result)
     except ImportError:
