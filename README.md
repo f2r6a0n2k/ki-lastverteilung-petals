@@ -1,5 +1,7 @@
 # KI-Lastverteilung Petals - Verteilte KI-Inferenz
 
+https://youtu.be/nH_zVxJemSU
+
 Vollständiges Projekt für echte Lastverteilung: Einzelne Prompts werden auf mehrere Rechner verteilt (nicht nur ganze Prompts an einzelne Worker).
 
 ## Projektstruktur
