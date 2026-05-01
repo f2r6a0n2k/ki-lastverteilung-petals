@@ -91,10 +91,20 @@ while true; do
         w ""
     done
 
-    # Koordinator
+    # Koordinator + Modus
     w "${BLUE}📊 Koordinator (Round-Robin)${RESET}"
     if ps aux 2>/dev/null | grep -q "[u]vicorn koordinator"; then
         w "   Status: ${GREEN}✅ AKTIV (http://192.168.178.109:5000)${RESET}"
+        # Modus anzeigen
+        if [ -f /tmp/llama_mode.json ]; then
+            mode=$(python3 -c "import json; d=json.load(open('/tmp/llama_mode.json')); print(d['mode'])" 2>/dev/null)
+            reason=$(python3 -c "import json; d=json.load(open('/tmp/llama_mode.json')); print(d['reason'])" 2>/dev/null)
+            if [ "$mode" = "petals" ]; then
+                w "   Modus: ${GREEN}🌸 Petals${RESET} (${reason})"
+            else
+                w "   Modus: ${YELLOW}⚙ llama.cpp${RESET} (${reason})"
+            fi
+        fi
     else
         w "   Status: ${RED}❌ INAKTIV${RESET}"
         w "   Start: cd ~/Dokumente/KI_Lastverteilung_Petals && ~/petals-env/bin/python scripts/koordinator.py &'"

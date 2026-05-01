@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """
-Koordinator für KI-Lastverteilung mit intelligenter Worker-Auswahl
+Koordinator für KI-Lastverteilung mit auto-detect: Petals vs llama.cpp
 FastAPI + uvicorn, startet auf Port 5000
+
+Erkennungslogik:
+  Petals-Modus aktiv wenn:
+    1. Petals auf >=2 Nodes installiert (petals-server auf Port 8080-8089)
+    2. Latenz zwischen Nodes < 20ms
+    3. Mindestens 2 Worker mit ähnlicher Hardware (RAM ±50%)
+  Sonst: llama.cpp-Modus (parallele Worker)
 """
 
 import json
@@ -19,6 +26,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 STATS_FILE = Path("/tmp/llama_stats.json")
+MODE_FILE = Path("/tmp/llama_mode.json")
 LOCAL_IP = subprocess.check_output(["hostname", "-I"], text=True).strip().split()[0]
 LOCAL_SUBNET = ".".join(LOCAL_IP.split(".")[:3])
 SSH_PASS = "cornholio"
@@ -27,7 +35,10 @@ app = FastAPI(title="KI-Lastverteilung Koordinator")
 
 state = {
     "session_start": datetime.now().isoformat(),
+    "mode": "llama.cpp",
+    "mode_reason": "Petals-Voraussetzungen nicht erfüllt",
     "workers": {},
+    "petals_nodes": [],
     "total_requests": 0,
 }
 state_lock = threading.Lock()
@@ -47,6 +58,8 @@ def save_stats():
     try:
         with open(STATS_FILE, "w") as f:
             json.dump(state, f, indent=2)
+        with open(MODE_FILE, "w") as f:
+            json.dump({"mode": state["mode"], "reason": state["mode_reason"]}, f)
     except Exception:
         pass
 
@@ -70,11 +83,109 @@ def discover_workers():
     return sorted(set(workers))
 
 
+def check_petals_on_node(ip):
+    try:
+        if ip == LOCAL_IP or ip == "127.0.0.1":
+            r = subprocess.run(
+                ["python3", "-c", "import petals; print(petals.__version__)"],
+                capture_output=True, text=True, timeout=5
+            )
+            if r.returncode == 0:
+                return r.stdout.strip()
+        else:
+            r = subprocess.run(
+                f"sshpass -p {SSH_PASS} ssh -o StrictHostKeyChecking=no -o ConnectTimeout=1 "
+                f"user@{ip} 'python3 -c \"import petals; print(petals.__version__)\" 2>/dev/null'",
+                shell=True, capture_output=True, text=True, timeout=5
+            )
+            if r.returncode == 0:
+                return r.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
+def measure_latency(ip1, ip2):
+    try:
+        if ip2 == LOCAL_IP or ip2 == "127.0.0.1":
+            cmd = f"fping {ip2} -c 3 2>&1 | tail -1"
+            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
+            match = re.search(r'([0-9.]+)\s*ms', r.stdout)
+            if match:
+                return float(match.group(1))
+        else:
+            cmd = (
+                f"sshpass -p {SSH_PASS} ssh -o StrictHostKeyChecking=no -o ConnectTimeout=1 "
+                f"user@{ip2} \"ping {ip1} -c 3 2>/dev/null | grep rtt | awk -F'/' '{{print $5}}'\""
+            )
+            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
+            if r.stdout.strip():
+                return float(r.stdout.strip())
+    except Exception:
+        pass
+    return 999
+
+
+def evaluate_petals_mode():
+    workers = discover_workers()
+    petals_ips = []
+    latencies = {}
+    node_rams = {}
+
+    for w in workers:
+        ip = w.split("//")[1].split(":")[0]
+        petals_ver = check_petals_on_node(ip)
+        if petals_ver:
+            petals_ips.append(ip)
+            latencies[ip] = {}
+
+    if len(petals_ips) < 2:
+        return False, "Nur 1 Node mit Petals installiert (mind. 2 benötigt)"
+
+    for ip1 in petals_ips:
+        for ip2 in petals_ips:
+            if ip1 < ip2:
+                lat = measure_latency(ip1, ip2)
+                latencies[ip1][ip2] = lat
+                latencies[ip2] = latencies.get(ip2, {})
+                latencies[ip2][ip1] = lat
+
+    max_latency = 0
+    for ip1 in latencies:
+        for ip2 in latencies.get(ip1, {}):
+            max_latency = max(max_latency, latencies[ip1][ip2])
+
+    if max_latency > 20:
+        return False, f"Netzwerk-Latenz zu hoch: {max_latency:.1f}ms (max 20ms)"
+
+    for ip in petals_ips:
+        try:
+            if ip == LOCAL_IP or ip == "127.0.0.1":
+                r = subprocess.run("free | awk '/^Mem:/{print $2}'", shell=True, capture_output=True, text=True, timeout=3)
+            else:
+                r = subprocess.run(
+                    f"sshpass -p {SSH_PASS} ssh -o StrictHostKeyChecking=no -o ConnectTimeout=1 "
+                    f"user@{ip} \"free | awk '/^Mem:/{{print $2}}\" 2>/dev/null\"",
+                    shell=True, capture_output=True, text=True, timeout=3
+                )
+            if r.stdout.strip():
+                node_rams[ip] = int(r.stdout.strip())
+        except Exception:
+            pass
+
+    if len(node_rams) >= 2:
+        rams = list(node_rams.values())
+        if max(rams) > min(rams) * 1.5:
+            return False, "Hardware zu unterschiedlich (RAM-Faktor >1.5)"
+
+    return True, f"Petals aktiv: {len(petals_ips)} Nodes, max. Latenz {max_latency:.1f}ms"
+
+
 def get_remote_stats(ip):
     try:
         cmd = (
-            f"sshpass -p {SSH_PASS} ssh -o StrictHostKeyChecking=no "
-            f"-o ConnectTimeout=1 user@{ip} "
+            f"sshpass -p {SSH_PASS} ssh -o StrictHostKeyChecking=no -o ConnectTimeout=1 "
+            f"user@{ip} "
             "\"idle=$(top -b -n1 2>/dev/null | grep '^%%Cpu' | grep -oP '[0-9,]+(?=\\s*id)' | tr ',' '.'); "
             "idle=${idle:-100}; idle=${idle%%.*}; "
             "cpu=$((100-idle)); [ $cpu -lt 0 ] && cpu=0; "
@@ -115,7 +226,12 @@ def health_check_workers():
     workers = discover_workers()
     now = datetime.now().isoformat()
 
+    petals_ok, petals_reason = evaluate_petals_mode()
+
     with state_lock:
+        state["mode"] = "petals" if petals_ok else "llama.cpp"
+        state["mode_reason"] = petals_reason
+
         known = set(state["workers"].keys())
         found = set()
 
@@ -231,54 +347,71 @@ def workers():
                 for w, info in state["workers"].items()}
 
 
-@app.post("/chat")
-def chat(req: ChatRequest):
+@app.get("/mode")
+def mode():
+    with state_lock:
+        return {
+            "mode": state["mode"],
+            "reason": state["mode_reason"],
+            "petals_nodes": state.get("petals_nodes", []),
+        }
+
+
+def _route_request(messages, max_tokens, temperature):
+    mode = state["mode"]
+
+    if mode == "petals":
+        try:
+            import petals
+            from petals import DistributedLlamaForCausalLM, AutoTokenizer
+            tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-70b-chat-hf")
+            model = DistributedLlamaForCausalLM.from_pretrained("meta-llama/Llama-2-70b-chat-hf")
+            inputs = tokenizer.apply_chat_template(messages, return_tensors="pt")
+            outputs = model.generate(inputs, max_new_tokens=max_tokens, temperature=temperature)
+            response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+            return {"mode": "petals", "response": response}
+        except Exception as e:
+            state["mode"] = "llama.cpp"
+            state["mode_reason"] = f"Petals-Fehler, Fallback zu llama.cpp: {e}"
+            save_stats()
+
     worker = select_best_worker()
     if not worker:
-        raise HTTPException(status_code=503, detail="Kein Worker verfügbar")
+        return None
 
     try:
         resp = requests.post(
             f"{worker}/v1/chat/completions",
-            json={
-                "messages": req.messages,
-                "max_tokens": req.max_tokens,
-                "temperature": req.temperature,
-            },
+            json={"messages": messages, "max_tokens": max_tokens, "temperature": temperature},
             timeout=180,
         )
         result = resp.json()
         return {
+            "mode": "llama.cpp",
             "worker": worker,
             "response": result["choices"][0]["message"]["content"],
         }
     except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        return None
+
+
+@app.post("/chat")
+def chat(req: ChatRequest):
+    result = _route_request(req.messages, req.max_tokens, req.temperature)
+    if not result:
+        raise HTTPException(status_code=503, detail="Kein Worker verfügbar")
+    return result
 
 
 @app.post("/ask")
 def ask(req: PromptRequest):
-    worker = select_best_worker()
-    if not worker:
+    result = _route_request(
+        [{"role": "user", "content": req.prompt}],
+        req.max_tokens, 0.7
+    )
+    if not result:
         raise HTTPException(status_code=503, detail="Kein Worker verfügbar")
-
-    try:
-        resp = requests.post(
-            f"{worker}/v1/chat/completions",
-            json={
-                "messages": [{"role": "user", "content": req.prompt}],
-                "max_tokens": req.max_tokens,
-                "temperature": 0.7,
-            },
-            timeout=180,
-        )
-        result = resp.json()
-        return {
-            "worker": worker,
-            "response": result["choices"][0]["message"]["content"],
-        }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
+    return result
 
 
 if __name__ == "__main__":
