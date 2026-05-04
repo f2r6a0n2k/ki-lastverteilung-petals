@@ -249,9 +249,9 @@ After=network.target
 
 [Service]
 Type=simple
-User=frank
-WorkingDirectory=/home/frank/llama.cpp
-ExecStart=/home/frank/llama.cpp/build/bin/llama-server -m /home/frank/llama.cpp/models/Llama-3.2-3B-Instruct-Q4_K_M.gguf -c 1024 --port 8080 --host 0.0.0.0 -t 4
+User=<benutzername>
+WorkingDirectory=/home/<benutzername>/llama.cpp
+ExecStart=/home/<benutzername>/llama.cpp/build/bin/llama-server -m /home/<benutzername>/llama.cpp/models/Llama-3.2-3B-Instruct-Q4_K_M.gguf -c 1024 --port 8080 --host 0.0.0.0 -t 4
 Restart=on-failure
 RestartSec=5
 

@@ -34,7 +34,7 @@ Erstellt `credentials.json` (wird von Git ignoriert). Alternativ manuell erstell
     "default_user": "user",
     "default_pass": "geheim",
     "nodes": {
-        "192.168.178.42": {"user": "admin", "pass": "anders"}
+        "10.0.0.42": {"user": "admin", "pass": "anders"}
     }
 }
 ```
@@ -149,12 +149,12 @@ Im TUI: `/models` → Wähle `KI-Lastverteilung (Auto)`.
 python3 scripts/llama_client.py "Wie funktioniert KI?"
 
 # Direkt via API
-curl -X POST http://192.168.178.109:5000/ask \
+curl -X POST http://<koordinator-ip>:5000/ask \
   -H "Content-Type: application/json" \
   -d '{"prompt": "Was ist Petals?", "max_tokens": 128}'
 
 # OpenAI-kompatibel (für OpenCode, ChatGPT-Clients etc.)
-curl -X POST http://192.168.178.109:5000/v1/chat/completions \
+curl -X POST http://<koordinator-ip>:5000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"messages": [{"role": "user", "content": "Hallo!"}]}'
 ```

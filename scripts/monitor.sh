@@ -121,7 +121,7 @@ while true; do
     # Koordinator + Modus
     w "${BLUE}📊 Koordinator (Round-Robin)${RESET}"
     if ps aux 2>/dev/null | grep -q "[u]vicorn koordinator"; then
-        w "   Status: ${GREEN}✅ AKTIV (http://192.168.178.109:5000)${RESET}"
+        w "   Status: ${GREEN}✅ AKTIV (http://${LOCAL_IP}:5000)${RESET}"
         # Modus anzeigen
         if [ -f /tmp/llama_mode.json ]; then
             mode=$(python3 -c "import json; d=json.load(open('/tmp/llama_mode.json')); print(d['mode'])" 2>/dev/null)

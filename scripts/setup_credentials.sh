@@ -37,6 +37,6 @@ echo ""
 echo "Für individuelle Node-Credentials editiere die Datei manuell:"
 echo '{'
 echo '    "nodes": {'
-echo '        "192.168.178.42": {"user": "admin", "pass": "geheim"}'
+ echo '        "10.0.0.42": {"user": "admin", "pass": "geheim"}'
 echo '    }'
 echo '}'
