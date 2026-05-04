@@ -170,13 +170,39 @@ pip install --upgrade setuptools
 
 > **Hinweis:** Diese Schritte sind notwendig weil `hivemind` 1.1.10.post2 nicht als fertiges Rad verfügbar ist und mit neueren setuptools-Versionen nicht baut.
 
+### 3b. Hugging Face Authentifizierung (für gated models)
+
+Meta-Llama-Modelle erfordern einen **Hugging Face Account** und **Zugriffsfreigabe**:
+
+1. Account erstellen auf https://huggingface.co/signup
+2. Zugang beantragen: https://huggingface.co/meta-llama/Meta-Llama-3.1-8B-Instruct → "Agree and access repository"
+3. Access Token erstellen: https://huggingface.co/settings/tokens → "New token" (Typ: Read)
+4. Einloggen:
+
+```bash
+huggingface-cli login
+# Token eingeben wenn gefragt
+```
+
+**Oder** Token direkt beim Start angeben (siehe Schritt 4).
+
 ### 4. Worker starten
 
+**Mit vorherigem Login** (`huggingface-cli login`):
 ```bash
 python -m petals.cli.run_server \
   meta-llama/Meta-Llama-3.1-8B-Instruct \
   --port 31330 \
   --public_name "My-Worker"
+```
+
+**Mit Token direkt:**
+```bash
+python -m petals.cli.run_server \
+  meta-llama/Meta-Llama-3.1-8B-Instruct \
+  --port 31330 \
+  --public_name "My-Worker" \
+  --token hf_DEIN_TOKEN_HIER
 ```
 
 **Wichtig:** Petals-Worker nutzen Port **31330** (nicht 8080-8089) und sind **nicht direkt** mit den llama.cpp-Clients kompatibel. Sie benötigen einen Petals-Koordinator.
@@ -230,3 +256,7 @@ sudo systemctl status llama-worker
 | Modell-Download zu langsam | WLAN/Kabel prüfen, mirror wechseln |
 | Worker antwortet nicht | `tail -f ~/llama-worker.log` für Fehlerdetails |
 | Port 8080 belegt | Anderen Port wählen: `--port 8082` |
+| `401 Unauthorized` / `gated repo` | Hugging Face Token: `huggingface-cli login` oder `--token hf_...` |
+| `ModuleNotFoundError: No module named 'petals'` | Virtuelle Umgebung aktivieren: `source ~/petals-env/bin/activate` |
+| `hivemind` Build fehler | `pip install 'setuptools<69' wheel && pip install --no-build-isolation hivemind==1.1.10.post2` |
+| NumPy API Error | `pip install 'numpy<2.0'` |
