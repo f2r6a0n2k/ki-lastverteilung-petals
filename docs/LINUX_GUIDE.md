@@ -193,13 +193,25 @@ huggingface-cli login
 
 ### 4. Worker starten
 
-**Empfohlen: Ohne Token (öffentliches Modell)**
+**Mit GPU (empfohlen):**
 ```bash
 python -m petals.cli.run_server \
   bigscience/bloom-petals \
   --port 31330 \
   --public_name "My-Worker"
 ```
+
+**CPU-only (langsam, erfordert `--num_blocks`):**
+```bash
+python -m petals.cli.run_server \
+  bigscience/bloom-petals \
+  --port 31330 \
+  --public_name "My-Worker" \
+  --num_blocks 4 \
+  --device cpu
+```
+
+> **Hinweis:** `--num_blocks` bestimmt, wie viele Modell-Blöcke dieser Worker bedient. Bei CPU: 2-4 Blöcke wählen. BLOOM hat insgesamt 70 Blöcke – mehr Blöcke = höherer RAM-Verbrauch.
 
 Dies startet den Worker mit **BLOOM** (176B Parameter) – kein Token nötig, funktioniert sofort.
 
@@ -265,8 +277,9 @@ sudo systemctl status llama-worker
 | `ufw: command not found` | `sudo apt install ufw` und `sudo ufw enable` |
 | Modell-Download zu langsam | WLAN/Kabel prüfen, mirror wechseln |
 | Worker antwortet nicht | `tail -f ~/llama-worker.log` für Fehlerdetails |
-| Port 8080 belegt | Anderen Port wählen: `--port 8082` |
+| Port 8080/31330 belegt | Anderen Port wählen: `--port 8082` |
 | `401 Unauthorized` / `gated repo` | Hugging Face Token: `huggingface-cli login` oder `--token hf_...` |
 | `ModuleNotFoundError: No module named 'petals'` | Virtuelle Umgebung aktivieren: `source ~/petals-env/bin/activate` |
 | `hivemind` Build fehler | `pip install 'setuptools<69' wheel && pip install --no-build-isolation hivemind==1.1.10.post2` |
 | NumPy API Error | `pip install 'numpy<2.0'` |
+| `GPU is not available` / `AssertionError` | CPU: `--num_blocks 4 --device cpu` hinzufügen |
