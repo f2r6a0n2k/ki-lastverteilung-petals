@@ -188,16 +188,21 @@ huggingface-cli login
 
 ### 4. Worker starten
 
-**Mit vorherigem Login** (`huggingface-cli login`):
+**Empfohlen: Ohne Token (öffentliches Modell)**
 ```bash
 python -m petals.cli.run_server \
-  meta-llama/Meta-Llama-3.1-8B-Instruct \
+  bigscience/bloom-petals \
   --port 31330 \
   --public_name "My-Worker"
 ```
 
-**Mit Token direkt:**
+Dies startet den Worker mit **BLOOM** (176B Parameter) – kein Token nötig, funktioniert sofort.
+
+**Alternativ: Gated Model (z.B. Llama) mit Token:**
 ```bash
+# Nur für gated models (Meta-Llama etc.):
+huggingface-cli login  # einmalig einloggen
+
 python -m petals.cli.run_server \
   meta-llama/Meta-Llama-3.1-8B-Instruct \
   --port 31330 \
