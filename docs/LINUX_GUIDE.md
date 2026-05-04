@@ -91,15 +91,45 @@ Petals-Worker bieten echte Lastverteilung (Modell-Schichten auf verschiedene Rec
 python3 --version
 ```
 
-Falls Python 3.12+: Verwende `pyenv` oder `conda` für Python 3.11:
+Petals benötigt Python **< 3.12** (Python 3.10 oder 3.11). Falls Python 3.12+ installiert ist:
+
+**Methode A: deadsnakes PPA (empfohlen, am einfachsten)**
 
 ```bash
-# Mit pyenv:
+sudo add-apt-repository ppa:deadsnakes/ppa -y
+sudo apt update
+sudo apt install -y python3.11 python3.11-venv python3.11-dev
+
+# Virtuelle Umgebung mit Python 3.11 erstellen
+python3.11 -m venv ~/petals-env
+source ~/petals-env/bin/activate
+
+# Prüfen
+python3 --version  # Sollte 3.11.x anzeigen
+```
+
+**Methode B: pyenv (Alternative)**
+
+```bash
 curl https://pyenv.run | bash
-# Füge pyenv zu ~/.bashrc hinzu, dann:
+
+# Shell konfigurieren (~/.bashrc hinzufügen):
+cat >> ~/.bashrc << 'PYENV_EOF'
+export PYENV_ROOT="$HOME/.pyenv"
+[[ -d $PYENV_ROOT/bin ]] && export PATH="$PYENV_ROOT/bin:$PATH"
+eval "$(pyenv init -)"
+eval "$(pyenv virtualenv-init -)"
+PYENV_EOF
+
+# Shell neu laden
+source ~/.bashrc
+
+# Python 3.11 installieren
 pyenv install 3.11.8
 pyenv global 3.11.8
 ```
+
+> **Wichtig:** Nach der Installation stelle sicher, dass `python3 --version` **3.11.x** anzeigt, bevor du mit Schritt 2 fortfährst.
 
 ### 2. PyTorch installieren
 
