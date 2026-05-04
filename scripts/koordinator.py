@@ -261,7 +261,12 @@ def get_node_ram(ip):
 
 
 def init_petals_client():
-    """Initialisiert den Petals-Client (Lazy Loading, thread-safe)"""
+    """Initialisiert den Petals-Client (Lazy Loading, thread-safe)
+
+    Hinweis: Petals-Modelle werden NICHT lokal geladen.
+    Die Inferenz läuft verteilt über den Swarm.
+    Der Koordinator fungiert als Gateway und nutzt InferenceSession.
+    """
     if _petals_client["initialized"] or _petals_client["initializing"]:
         return _petals_client["initialized"]
 
@@ -272,12 +277,12 @@ def init_petals_client():
         _petals_client["initializing"] = True
 
         try:
-            print(f"[Koordinator] Petals Client: Lade '{PETALS_MODEL}'...")
+            print(f"[Koordinator] Petals Client: Verbinde mit '{PETALS_MODEL}'...")
             state["mode"] = "petals"
-            state["mode_reason"] = f"Initialisiere {PETALS_MODEL}..."
+            state["mode_reason"] = f"Verbinde mit Petals-Swarm ({PETALS_MODEL})..."
             save_stats()
 
-            from petals import DistributedLlamaForCausalLM
+            from petals import InferenceSession
             from transformers import AutoTokenizer
 
             load_kwargs = {}
@@ -293,8 +298,8 @@ def init_petals_client():
 
             print(f"[Koordinator] Lade Tokenizer...")
             _petals_client["tokenizer"] = AutoTokenizer.from_pretrained(PETALS_MODEL, **load_kwargs)
-            print(f"[Koordinator] Lade Modell (kann mehrere Minuten dauern)...")
-            _petals_client["model"] = DistributedLlamaForCausalLM.from_pretrained(PETALS_MODEL, **load_kwargs)
+            _petals_client["initial_peers"] = load_kwargs.get("initial_peers", PUBLIC_INITIAL_PEERS)
+            _petals_client["model_name"] = PETALS_MODEL
 
             _petals_client["initialized"] = True
             _petals_client["error"] = None
@@ -549,22 +554,36 @@ def list_models():
 
 
 def _run_petals_inference(messages, max_tokens, temperature):
-    """Führt Inferenz über Petals-Swarm aus"""
+    """Führt Inferenz über Petals-Swarm aus (verteilte Inferenz, kein lokales Modell)"""
     if not _petals_client["initialized"]:
         if not _petals_client["initializing"]:
             init_petals_client()
         if not _petals_client["initialized"]:
             raise RuntimeError(f"Petals nicht bereit: {_petals_client.get('error', 'initialisiert noch...')}")
 
+    from petals import InferenceSession
+    import torch
+
     with _petals_client["lock"]:
         tokenizer = _petals_client["tokenizer"]
-        model = _petals_client["model"]
+        model_name = _petals_client["model_name"]
+        initial_peers = _petals_client["initial_peers"]
 
         inputs = tokenizer.apply_chat_template(messages, return_tensors="pt", add_generation_prompt=True)
-        outputs = model.generate(inputs, max_new_tokens=max_tokens, temperature=temperature)
+        input_ids = inputs.to("cpu")
+
+        session = InferenceSession(
+            model_name,
+            initial_peers=initial_peers,
+            max_new_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+        with torch.no_grad():
+            outputs = session.generate(input_ids)
+
         response = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-    # Prompt aus der Response entfernen
     prompt_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     if response.startswith(prompt_text):
         response = response[len(prompt_text):]
