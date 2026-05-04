@@ -133,7 +133,7 @@ pyenv global 3.11.8
 
 ### 2. PyTorch installieren
 
-**Wichtig:** Petals benötigt eine ältere PyTorch-Version (< 2.2) für Kompatibilität mit `hivemind`.
+**Wichtig:** Petals benötigt PyTorch < 2.2 für Kompatibilität mit `hivemind`.
 
 **Mit NVIDIA GPU:**
 ```bash
@@ -148,25 +148,32 @@ pip install 'torch>=2.0,<2.2' 'torchvision>=0.15,<0.17' 'torchaudio>=2.0,<2.2' -
 ### 3. Petals installieren
 
 ```bash
-# setuptools zuerst installieren (für hivemind Build)
-pip install setuptools
+# 1. Build-Abhängigkeiten
+pip install 'setuptools<69' wheel 'grpcio-tools>=1.70'
 
-# Petals mit allen Abhängigkeiten
-pip install petals
+# 2. hivemind manuell bauen (wichtig!)
+pip install --no-build-isolation hivemind==1.1.10.post2
 
-# Fehlende Abhängigkeiten explizit installieren
-pip install async-timeout bitsandbytes cpufeature Dijkstar humanfriendly
+# 3. Petals ohne Abhängigkeiten
+pip install --no-deps petals
+
+# 4. Alle fehlenden Abhängigkeiten installieren
+pip install peft==0.5.0 safetensors sentencepiece speedtest-cli==2.1.3 \
+  tensor-parallel==1.0.23 tokenizers 'transformers>=4.32.0,<4.35.0' \
+  'huggingface-hub>=0.11.1,<1.0' 'accelerate>=0.22.0,<0.25.0' \
+  async-timeout bitsandbytes==0.41.1 cpufeature Dijkstar humanfriendly \
+  'numpy<2.0'
+
+# 5. setuptools auf normale Version zurücksetzen
+pip install --upgrade setuptools
 ```
 
-> **Falls `hivemind` Build fehlschlägt** (`ModuleNotFoundError: No module named 'pkg_resources'`):
-> ```bash
-> pip install --no-build-isolation hivemind==1.1.10.post2
-> ```
+> **Hinweis:** Diese Schritte sind notwendig weil `hivemind` 1.1.10.post2 nicht als fertiges Rad verfügbar ist und mit neueren setuptools-Versionen nicht baut.
 
 ### 4. Worker starten
 
 ```bash
-python3 -m petals.cli.run_server \
+python -m petals.cli.run_server \
   meta-llama/Meta-Llama-3.1-8B-Instruct \
   --port 31330 \
   --public_name "My-Worker"
