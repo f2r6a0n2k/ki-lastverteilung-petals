@@ -227,7 +227,7 @@ python -m petals.cli.run_server \
   --token hf_DEIN_TOKEN_HIER
 ```
 
-**Wichtig:** Petals-Worker nutzen Port **31330** (nicht 8080-8089) und sind **nicht direkt** mit den llama.cpp-Clients kompatibel. Sie benötigen einen Petals-Koordinator.
+**Wichtig:** Petals-Worker nutzen Port **31330** (nicht 8080-8089) und koordinieren sich **selbst** über das Petals DHT-Swarm-System.
 
 ### 5. Firewall öffnen
 
@@ -283,3 +283,65 @@ sudo systemctl status llama-worker
 | `hivemind` Build fehler | `pip install 'setuptools<69' wheel && pip install --no-build-isolation hivemind==1.1.10.post2` |
 | NumPy API Error | `pip install 'numpy<2.0'` |
 | `GPU is not available` / `AssertionError` | CPU: `--num_blocks 4 --device cpu` hinzufügen |
+
+---
+
+## Koordinator (API Gateway)
+
+Der Koordinator ist das **zentrale API-Gateway** für Clients. Er bietet eine OpenAI-kompatible API und leitet Anfragen an Petals-Worker oder llama.cpp-Worker weiter.
+
+> **Wichtig:** Petals-Worker koordinieren sich **selbst** über das DHT-Swarm-System. Der Koordinator ist **kein** Swarm-Controller, sondern ein **Client-Gateway**.
+
+### Architektur
+
+```
+Client → Koordinator (:5000) → Petals-Swarm (Worker auf :31330)
+                          ↘ llama.cpp Worker (auf :8080-8089)
+```
+
+### Koordinator starten
+
+**llama.cpp Modus (Standard):**
+```bash
+bash scripts/start_koordinator.sh
+```
+
+**Petals Gateway Modus (verbindet sich mit öffentlichem Swarm):**
+```bash
+bash scripts/start_koordinator.sh --petals
+```
+
+**Mit Hugging Face Token (für gated models):**
+```bash
+bash scripts/start_koordinator.sh --petals --token hf_DEIN_TOKEN
+```
+
+**Alternativ mit Umgebungsvariablen:**
+```bash
+export PETALS_MODEL="bigscience/bloom-petals"
+export PETALS_TOKEN="hf_xxx"
+bash scripts/start_koordinator.sh --petals
+```
+
+### API-Endpunkte
+
+| Endpunkt | Methode | Beschreibung |
+|----------|---------|--------------|
+| `/health` | GET | Health Check |
+| `/v1/models` | GET | Verfügbare Modelle auflisten |
+| `/v1/chat/completions` | POST | OpenAI-kompatible Chat API |
+| `/chat` | POST | Chat mit Messages-Format |
+| `/ask` | POST | Einfache Frage-Antwort |
+| `/stats` | GET | Worker-Statistiken |
+| `/mode` | GET | Aktueller Modus (petals/llama.cpp) |
+
+### Beispiel: Anfrage senden
+
+```bash
+curl http://localhost:5000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{"role": "user", "content": "Hallo, wer bist du?"}],
+    "max_tokens": 100
+  }'
+```

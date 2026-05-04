@@ -1,20 +1,27 @@
 #!/usr/bin/env python3
 """
-Koordinator für KI-Lastverteilung mit auto-detect: Petals vs llama.cpp
-FastAPI + uvicorn, startet auf Port 5000
+Koordinator für KI-Lastverteilung - API Gateway mit Petals + llama.cpp Unterstützung
 
-Auto-Installationslogik:
-  1. Scannt Netzwerk nach erreichbaren Nodes (SSH + HTTP-Ports)
-  2. Installiert Petals automatisch auf Nodes mit SSH-Zugang
-  3. Startet Petals-Server mit Layer-Partitionierung
-  4. Prüft: >=2 Nodes, Latenz <20ms, RAM ähnlich
-  5. Wenn erfüllt -> Petals-Modus, sonst -> llama.cpp-Fallback
+Betriebsmodi:
+  1. Petals Gateway: Verbindet sich mit dem öffentlichen oder privaten Petals-Swarm
+     und nutzt verteilte Inferenz über alle verfügbaren Worker.
+  2. llama.cpp Load Balancer: Verteilt Anfragen an lokale llama.cpp Worker (Port 8080-8089).
+
+Petals-Worker koordinieren sich SELBST über das DHT-Swarm-System.
+Der Koordinator ist das Frontend/API-Gateway für Clients.
+
+Start:
+  python3 scripts/koordinator.py              # llama.cpp Modus
+  python3 scripts/koordinator.py --petals     # Petals Gateway Modus
+  python3 scripts/koordinator.py --petals --private-swarm  # Privater Swarm
 """
 
+import argparse
 import json
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -38,6 +45,26 @@ CONFIG_FILE = SCRIPT_DIR / "nodes.json"
 LOCAL_IP = subprocess.check_output(["hostname", "-I"], text=True).strip().split()[0]
 LOCAL_SUBNET = ".".join(LOCAL_IP.split(".")[:3])
 
+# === Petals-Modus Konfiguration ===
+PETALS_MODEL = os.environ.get("PETALS_MODEL", "bigscience/bloom-petals")
+PETALS_TOKEN = os.environ.get("PETALS_TOKEN", None)
+
+# Öffentliche Petals Bootstrap-Server
+PUBLIC_INITIAL_PEERS = [
+    "/dns/bootstrap1.petals.dev/tcp/31337/p2p/QmedTaZXmULqwspJXz44SsPZyTNKxhnnFvYRajfH7MGhCY",
+    "/dns/bootstrap2.petals.dev/tcp/31338/p2p/QmQGTqmM7NKjV6ggU1ZCap8zWiyKR89RViDXiqehSiCpY5",
+]
+
+# === Globale Variablen für Petals-Client ===
+_petals_client = {
+    "model": None,
+    "tokenizer": None,
+    "initializing": False,
+    "initialized": False,
+    "error": None,
+    "lock": threading.Lock(),
+}
+
 app = FastAPI(title="KI-Lastverteilung Koordinator")
 
 state = {
@@ -46,12 +73,25 @@ state = {
     "mode_reason": "Prüfung läuft...",
     "workers": {},
     "petals_nodes": [],
+    "petals_swarm_connected": False,
     "total_requests": 0,
     "install_status": {},
 }
 state_lock = threading.Lock()
 
-MODEL_NAME = "bigscience/bloom-560m"
+# CLI Argumente
+parser = argparse.ArgumentParser(description="KI-Lastverteilung Koordinator")
+parser.add_argument("--petals", action="store_true", help="Petals Gateway Modus aktivieren")
+parser.add_argument("--private-swarm", action="store_true", help="Privaten Swarm betreiben (kein public)")
+parser.add_argument("--port", type=int, default=5000, help="API Port (default: 5000)")
+parser.add_argument("--model", type=str, default=None, help="Petals Modell (default: bigscience/bloom-petals)")
+parser.add_argument("--token", type=str, default=None, help="Hugging Face Token für gated models")
+args = parser.parse_args()
+
+if args.model:
+    PETALS_MODEL = args.model
+if args.token:
+    PETALS_TOKEN = args.token
 
 
 def load_config():
@@ -60,14 +100,14 @@ def load_config():
         "default_pass": "",
         "nodes": {}
     }
-    
+
     if CONFIG_FILE.exists():
         try:
             with open(CONFIG_FILE) as f:
                 config["nodes"] = json.load(f).get("nodes", {})
         except Exception:
             pass
-            
+
     if CREDENTIALS_FILE.exists():
         try:
             with open(CREDENTIALS_FILE) as f:
@@ -77,7 +117,7 @@ def load_config():
                 config["nodes"].update(creds.get("nodes", {}))
         except Exception:
             print(f"WARNING: Could not load {CREDENTIALS_FILE}. SSH access will fail.")
-            
+
     return config
 
 
@@ -103,6 +143,8 @@ def ssh_exec(ip, cmd, timeout=30):
 
 def ssh_install_petals(ip):
     user, pwd = get_creds(ip)
+    install_script_url = "https://raw.githubusercontent.com/f2r6a0n2k/ki-lastverteilung-petals/main/scripts/install_petals_worker.sh"
+
     status = state["install_status"].get(ip, {})
     status["phase"] = "starting"
     state["install_status"][ip] = status
@@ -111,38 +153,28 @@ def ssh_install_petals(ip):
     def do_install():
         try:
             state["install_status"][ip]["phase"] = "checking_python"
-            ok, out, _ = ssh_exec(ip, "python3 --version && which python3")
+            save_stats()
+
+            ok, out, _ = ssh_exec(ip, "python3.11 --version 2>/dev/null || python3 --version")
             if not ok:
                 state["install_status"][ip] = {"phase": "failed", "error": "Python3 nicht gefunden"}
                 save_stats()
                 return False
 
-            state["install_status"][ip]["phase"] = "installing_virtualevn"
-            ssh_exec(ip, "pip3 install --user --break-system-packages virtualenv 2>/dev/null || true", timeout=60)
-
-            state["install_status"][ip]["phase"] = "creating_venv"
-            ssh_exec(ip, "mkdir -p ~/petals_env && rm -rf ~/petals_env/*")
-            ok, _, _ = ssh_exec(ip, "~/.local/bin/virtualenv ~/petals_env 2>/dev/null || python3 -m venv ~/petals_env")
-            if not ok:
-                state["install_status"][ip]["phase"] = "installing_setuptools"
-                ssh_exec(ip, "echo 'setuptools>=69,<70' > /tmp/requirements.txt && pip3 install --break-system-packages 'setuptools>=69,<70' 2>/dev/null || true", timeout=60)
-                ok, _, _ = ssh_exec(ip, "python3 -m venv ~/petals_env")
-                if not ok:
-                    state["install_status"][ip] = {"phase": "failed", "error": "venv creation failed"}
-                    save_stats()
-                    return False
+            state["install_status"][ip]["phase"] = "downloading_installer"
+            save_stats()
+            ssh_exec(ip, f"curl -sL {install_script_url} -o /tmp/install_petals.sh || wget -q {install_script_url} -O /tmp/install_petals.sh", timeout=30)
 
             state["install_status"][ip]["phase"] = "installing_petals"
-            cmd = ". ~/petals_env/bin/activate && pip install --upgrade pip setuptools wheel && " \
-                  f"pip install petals && python3 -c \"import petals; print(petals.__version__)\""
-            ok, out, err = ssh_exec(ip, cmd, timeout=600)
+            save_stats()
+            ok, out, err = ssh_exec(ip, "bash /tmp/install_petals.sh 2>&1 | tail -5", timeout=600)
 
             if ok:
-                state["install_status"][ip] = {"phase": "installed", "version": out.split("\n")[-1]}
+                state["install_status"][ip] = {"phase": "installed", "detail": out[:200] if out else ""}
                 save_stats()
                 return True
             else:
-                state["install_status"][ip] = {"phase": "failed", "error": err[:200]}
+                state["install_status"][ip] = {"phase": "failed", "error": err[:300] if err else out[:300]}
                 save_stats()
                 return False
         except Exception as e:
@@ -155,30 +187,33 @@ def ssh_install_petals(ip):
     return True
 
 
-def ssh_start_petals_server(ip, layer_start, layer_end):
+def ssh_start_petals_worker(ip, public_name=None):
     user, pwd = get_creds(ip)
-    cmd = f". ~/petals_env/bin/activate && " \
-          f"nohup python3 -m petals.cli.run_server {MODEL_NAME} " \
-          f"--num_layers {layer_start}-{layer_end} " \
-          f"--host 0.0.0.0 --port 8080 > /tmp/petals_server.log 2>&1 & " \
-          f"echo $!"
+    name = public_name or f"Worker-{ip}"
+    cmd = f". ~/petals-env/bin/activate && " \
+          f"nohup python -m petals.cli.run_server {PETALS_MODEL} " \
+          f"--port 31330 --public_name '{name}' " \
+          f"> /tmp/petals_server.log 2>&1 & echo $!"
     ok, pid, _ = ssh_exec(ip, cmd, timeout=10)
     return ok, pid
 
 
 def discover_nodes():
-    result = subprocess.run(
-        ["nmap", "-sn", "-T4", f"{LOCAL_SUBNET}.0/24"],
-        capture_output=True, text=True, timeout=60
-    )
-    ips = []
-    for line in result.stdout.splitlines():
-        match = re.search(r'(\d+\.\d+\.\d+\.\d+)', line)
-        if match:
-            ip = match.group(1)
-            if ip != LOCAL_IP:
-                ips.append(ip)
-    return ips
+    try:
+        result = subprocess.run(
+            ["nmap", "-sn", "-T4", f"{LOCAL_SUBNET}.0/24"],
+            capture_output=True, text=True, timeout=60
+        )
+        ips = []
+        for line in result.stdout.splitlines():
+            match = re.search(r'(\d+\.\d+\.\d+\.\d+)', line)
+            if match:
+                ip = match.group(1)
+                if ip != LOCAL_IP:
+                    ips.append(ip)
+        return ips
+    except Exception:
+        return []
 
 
 def test_ssh_access(ip):
@@ -225,38 +260,78 @@ def get_node_ram(ip):
     return None
 
 
+def init_petals_client():
+    """Initialisiert den Petals-Client (Lazy Loading, thread-safe)"""
+    if _petals_client["initialized"] or _petals_client["initializing"]:
+        return _petals_client["initialized"]
+
+    with _petals_client["lock"]:
+        if _petals_client["initialized"] or _petals_client["initializing"]:
+            return _petals_client["initialized"]
+
+        _petals_client["initializing"] = True
+
+        try:
+            print(f"[Koordinator] Petals Client: Lade '{PETALS_MODEL}'...")
+            state["mode"] = "petals"
+            state["mode_reason"] = f"Initialisiere {PETALS_MODEL}..."
+            save_stats()
+
+            from petals import DistributedLlamaForCausalLM
+            from transformers import AutoTokenizer
+
+            load_kwargs = {}
+            if PETALS_TOKEN:
+                load_kwargs["token"] = PETALS_TOKEN
+
+            if args.private_swarm:
+                load_kwargs["initial_peers"] = [f"/ip4/{LOCAL_IP}/tcp/31330/p2p/*"]
+                print(f"[Koordinator] Privater Swarm Modus: initial_peers = {LOCAL_IP}:31330")
+            else:
+                load_kwargs["initial_peers"] = PUBLIC_INITIAL_PEERS
+                print(f"[Koordinator] Verbind mit öffentlichem Petals-Swarm")
+
+            print(f"[Koordinator] Lade Tokenizer...")
+            _petals_client["tokenizer"] = AutoTokenizer.from_pretrained(PETALS_MODEL, **load_kwargs)
+            print(f"[Koordinator] Lade Modell (kann mehrere Minuten dauern)...")
+            _petals_client["model"] = DistributedLlamaForCausalLM.from_pretrained(PETALS_MODEL, **load_kwargs)
+
+            _petals_client["initialized"] = True
+            _petals_client["error"] = None
+            state["mode"] = "petals"
+            state["mode_reason"] = f"Verbunden mit Petals-Swarm ({PETALS_MODEL})"
+            state["petals_swarm_connected"] = True
+            save_stats()
+            print(f"[Koordinator] Petals Client bereit!")
+            return True
+
+        except Exception as e:
+            error_msg = str(e)[:500]
+            _petals_client["error"] = error_msg
+            _petals_client["initializing"] = False
+            state["mode"] = "llama.cpp"
+            state["mode_reason"] = f"Petals-Fehler: {error_msg[:200]}"
+            state["petals_swarm_connected"] = False
+            save_stats()
+            print(f"[Koordinator] Petals Client Fehler: {error_msg}")
+            return False
+
+
 def evaluate_petals_mode():
-    if not INSTALL_LOCK.exists():
-        return False, "Keine Petals-Nodes installiert"
+    """Prüft ob Petals-Modus verfügbar ist"""
+    if not args.petals:
+        return False, "Petals-Modus nicht aktiviert (starte mit --petals)"
 
-    nodes = []
-    try:
-        with open(INSTALL_LOCK) as f:
-            nodes = json.load(f)
-    except Exception:
-        return False, "Install-Lock leer"
+    if _petals_client["initialized"]:
+        return True, f"Petals aktiv: {PETALS_MODEL}"
 
-    if len(nodes) < 2:
-        return False, f"Nur {len(nodes)} Node mit Petals (mind. 2 benötigt)"
+    if _petals_client["initializing"]:
+        return False, "Petals initialisiert noch..."
 
-    for n in nodes:
-        ok, _, _ = ssh_exec(n["ip"], "python3 -c 'import petals'")
-        if not ok:
-            return False, f"Petals auf {n['ip']} nicht importierbar"
+    if _petals_client["error"]:
+        return False, f"Petals-Fehler: {_petals_client['error'][:100]}"
 
-    for i, n1 in enumerate(nodes):
-        for n2 in nodes[i+1:]:
-            lat = measure_latency(n1["ip"], n2["ip"])
-            if lat > 20:
-                return False, f"Latenz {n1['ip']}<->{n2['ip']}: {lat:.1f}ms > 20ms"
-
-    rams = [n.get("ram_kb") for n in nodes if n.get("ram_kb")]
-    if len(rams) >= 2:
-        if max(rams) > min(rams) * 1.5:
-            return False, "Hardware zu unterschiedlich (RAM-Faktor >1.5)"
-
-    state["petals_nodes"] = nodes
-    return True, f"Petals aktiv: {len(nodes)} Nodes ({', '.join(n['ip'] for n in nodes)})"
+    return False, "Petals Client noch nicht initialisiert"
 
 
 def auto_install_loop():
@@ -282,16 +357,9 @@ def auto_install_loop():
         state["install_status"] = {"phase": "installing"}
         save_stats()
 
-        total_layers = 24
-        layers_per_node = total_layers // len(eligible)
         installed_nodes = []
 
         for i, node in enumerate(eligible):
-            layer_start = i * layers_per_node
-            layer_end = (i + 1) * layers_per_node - 1
-            if i == len(eligible) - 1:
-                layer_end = total_layers - 1
-
             ssh_install_petals(node["ip"])
             time.sleep(2)
 
@@ -304,9 +372,10 @@ def auto_install_loop():
                 with state_lock:
                     status = state["install_status"].get(node["ip"], {})
                 if status.get("phase") == "installed":
-                    ok, pid = ssh_start_petals_server(node["ip"], layer_start, layer_end)
+                    name = f"Node-{i+1}"
+                    ok, pid = ssh_start_petals_worker(node["ip"], name)
                     if ok:
-                        installed_nodes.append({**node, "pid": pid, "layers": f"{layer_start}-{layer_end}"})
+                        installed_nodes.append({**node, "pid": pid, "name": name})
                     break
                 time.sleep(5)
                 waited += 5
@@ -318,30 +387,36 @@ def auto_install_loop():
 
 
 def health_check_workers():
+    """Scannt das Netzwerk nach llama.cpp Workern"""
     workers = []
-    result = subprocess.run(
-        ["nmap", "-p", "8080-8089", "--open", "-T4", f"{LOCAL_SUBNET}.0/24"],
-        capture_output=True, text=True, timeout=60
-    )
-    current_ip = None
-    for line in result.stdout.splitlines():
-        ip_match = re.search(r'\((\d+\.\d+\.\d+\.\d+)\)', line)
-        if ip_match:
-            current_ip = ip_match.group(1)
-        port_match = re.match(r'^(\d{4,5})/tcp\s+open', line.strip())
-        if port_match and current_ip:
-            workers.append(f"http://{current_ip}:{port_match.group(1)}")
+    try:
+        result = subprocess.run(
+            ["nmap", "-p", "8080-8089", "--open", "-T4", f"{LOCAL_SUBNET}.0/24"],
+            capture_output=True, text=True, timeout=60
+        )
+        current_ip = None
+        for line in result.stdout.splitlines():
+            ip_match = re.search(r'\((\d+\.\d+\.\d+\.\d+)\)', line)
+            if ip_match:
+                current_ip = ip_match.group(1)
+            port_match = re.match(r'^(\d{4,5})/tcp\s+open', line.strip())
+            if port_match and current_ip:
+                workers.append(f"http://{current_ip}:{port_match.group(1)}")
+    except Exception:
+        pass
 
     now = datetime.now().isoformat()
     petals_ok, petals_reason = evaluate_petals_mode()
 
     with state_lock:
-        state["mode"] = "petals" if petals_ok else "llama.cpp"
-        state["mode_reason"] = petals_reason
+        if petals_ok:
+            state["mode"] = "petals"
+            state["mode_reason"] = petals_reason
+        else:
+            state["mode"] = "llama.cpp"
+            state["mode_reason"] = petals_reason
 
-        found = set()
         for w in workers:
-            found.add(w)
             try:
                 start = time.time()
                 resp = requests.get(f"{w}/health", timeout=3)
@@ -353,7 +428,10 @@ def health_check_workers():
 
             ip = w.split("//")[1].split(":")[0]
             if w not in state["workers"]:
-                state["workers"][w] = {"ip": ip, "requests_total": 0, "requests_session": 0, "latencies": [], "healthy": False}
+                state["workers"][w] = {
+                    "ip": ip, "requests_total": 0, "requests_session": 0,
+                    "latencies": [], "healthy": False
+                }
 
             entry = state["workers"][w]
             entry["healthy"] = healthy
@@ -400,6 +478,8 @@ def save_stats():
 def run_health_loop():
     while True:
         try:
+            if args.petals and not _petals_client["initialized"]:
+                init_petals_client()
             auto_install_loop()
             health_check_workers()
         except Exception:
@@ -410,6 +490,8 @@ def run_health_loop():
 health_thread = threading.Thread(target=run_health_loop, daemon=True)
 health_thread.start()
 
+
+# === Request-Modelle ===
 
 class ChatRequest(BaseModel):
     messages: list = []
@@ -422,17 +504,24 @@ class PromptRequest(BaseModel):
     max_tokens: int = 1024
 
 
+class OpenAIChatRequest(BaseModel):
+    messages: list = []
+    model: str = "ki-lastverteilung-auto"
+    max_tokens: int = 1024
+    temperature: float = 0.7
+    stream: bool = False
+
+
+# === API Endpunkte ===
+
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "mode": state["mode"], "petals": _petals_client["initialized"]}
 
-
-# === OpenAI-kompatible Endpunkte ===
 
 @app.get("/v1/models")
 def list_models():
     with state_lock:
-        mode = state["mode"]
         models = []
         for w, info in state["workers"].items():
             ip = info.get("ip", w)
@@ -441,6 +530,13 @@ def list_models():
                 "object": "model",
                 "created": int(time.time()),
                 "owned_by": "ki-lastverteilung",
+            })
+        if state["mode"] == "petals":
+            models.insert(0, {
+                "id": PETALS_MODEL,
+                "object": "model",
+                "created": int(time.time()),
+                "owned_by": "petals",
             })
         if not models:
             models.append({
@@ -452,35 +548,46 @@ def list_models():
         return {"object": "list", "data": models}
 
 
-class OpenAIChatRequest(BaseModel):
-    messages: list = []
-    model: str = "ki-lastverteilung-auto"
-    max_tokens: int = 1024
-    temperature: float = 0.7
-    stream: bool = False
+def _run_petals_inference(messages, max_tokens, temperature):
+    """Führt Inferenz über Petals-Swarm aus"""
+    if not _petals_client["initialized"]:
+        if not _petals_client["initializing"]:
+            init_petals_client()
+        if not _petals_client["initialized"]:
+            raise RuntimeError(f"Petals nicht bereit: {_petals_client.get('error', 'initialisiert noch...')}")
+
+    with _petals_client["lock"]:
+        tokenizer = _petals_client["tokenizer"]
+        model = _petals_client["model"]
+
+        inputs = tokenizer.apply_chat_template(messages, return_tensors="pt", add_generation_prompt=True)
+        outputs = model.generate(inputs, max_new_tokens=max_tokens, temperature=temperature)
+        response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+    # Prompt aus der Response entfernen
+    prompt_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    if response.startswith(prompt_text):
+        response = response[len(prompt_text):]
+
+    return response.strip()
 
 
 @app.post("/v1/chat/completions")
 def openai_chat(req: OpenAIChatRequest):
-    mode = state["mode"]
+    petals_ok, _ = evaluate_petals_mode()
 
-    if mode == "petals":
+    # Versuch: Petals-Swarm
+    if petals_ok:
         try:
-            from petals import DistributedLlamaForCausalLM, AutoTokenizer
-            tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-            model = DistributedLlamaForCausalLM.from_pretrained(MODEL_NAME)
-            inputs = tokenizer.apply_chat_template(req.messages, return_tensors="pt")
-            outputs = model.generate(inputs, max_new_tokens=req.max_tokens, temperature=req.temperature)
-            response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-
+            response = _run_petals_inference(req.messages, req.max_tokens, req.temperature)
             if req.stream:
                 return _stream_response(response, mode="petals")
             return _completion_response(response, mode="petals")
         except Exception as e:
-            state["mode"] = "llama.cpp"
-            state["mode_reason"] = f"Petals-Fallback: {e}"
+            state["mode_reason"] = f"Petals-Fallback: {str(e)[:200]}"
             save_stats()
 
+    # Fallback: llama.cpp Worker
     worker = select_best_worker()
     if not worker:
         raise HTTPException(status_code=503, detail="Kein Worker verfügbar")
@@ -506,7 +613,7 @@ def _completion_response(content, mode="llama.cpp", worker=None):
         "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
         "object": "chat.completion",
         "created": int(time.time()),
-        "model": "ki-lastverteilung",
+        "model": PETALS_MODEL if mode == "petals" else "ki-lastverteilung",
         "choices": [{
             "index": 0,
             "message": {"role": "assistant", "content": content},
@@ -529,7 +636,7 @@ def _stream_response(content, mode="llama.cpp", worker=None):
                 "id": chat_id,
                 "object": "chat.completion.chunk",
                 "created": int(time.time()),
-                "model": "ki-lastverteilung",
+                "model": PETALS_MODEL if mode == "petals" else "ki-lastverteilung",
                 "choices": [{
                     "index": 0,
                     "delta": {"role": "assistant", "content": chunk + " "},
@@ -542,16 +649,13 @@ def _stream_response(content, mode="llama.cpp", worker=None):
             "id": chat_id,
             "object": "chat.completion.chunk",
             "created": int(time.time()),
-            "model": "ki-lastverteilung",
+            "model": PETALS_MODEL if mode == "petals" else "ki-lastverteilung",
             "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
         }
         yield f"data: {json.dumps(data)}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
-
-
-# === Bestehende Endpunkte ===
 
 
 @app.get("/stats")
@@ -570,31 +674,32 @@ def workers():
 @app.get("/mode")
 def mode():
     with state_lock:
-        return {"mode": state["mode"], "reason": state["mode_reason"], "petals_nodes": state.get("petals_nodes", [])}
+        return {
+            "mode": state["mode"],
+            "reason": state["mode_reason"],
+            "petals_model": PETALS_MODEL,
+            "petals_swarm": _petals_client["initialized"],
+            "petals_nodes": state.get("petals_nodes", []),
+        }
 
 
 @app.post("/install")
-def install(ip: str):
+def install_node(ip: str):
     if ssh_install_petals(ip):
         return {"status": "installation_started"}
     return {"status": "failed"}
 
 
 def _route_request(messages, max_tokens, temperature):
-    mode = state["mode"]
+    """Interne Routing-Funktion für /chat und /ask Endpunkte"""
+    petals_ok, _ = evaluate_petals_mode()
 
-    if mode == "petals":
+    if petals_ok:
         try:
-            from petals import DistributedLlamaForCausalLM, AutoTokenizer
-            tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-            model = DistributedLlamaForCausalLM.from_pretrained(MODEL_NAME)
-            inputs = tokenizer.apply_chat_template(messages, return_tensors="pt")
-            outputs = model.generate(inputs, max_new_tokens=max_tokens, temperature=temperature)
-            response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-            return {"mode": "petals", "response": response}
+            response = _run_petals_inference(messages, max_tokens, temperature)
+            return {"mode": "petals", "model": PETALS_MODEL, "response": response}
         except Exception as e:
-            state["mode"] = "llama.cpp"
-            state["mode_reason"] = f"Petals-Fallback: {e}"
+            state["mode_reason"] = f"Petals-Fallback: {str(e)[:200]}"
             save_stats()
 
     worker = select_best_worker()
@@ -630,4 +735,16 @@ def ask(req: PromptRequest):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=5000)
+    print(f"{'='*50}")
+    print(f"  KI-Lastverteilung Koordinator")
+    print(f"{'='*50}")
+    print(f"  Port: {args.port}")
+    print(f"  Petals-Modus: {'Ja' if args.petals else 'Nein'}")
+    if args.petals:
+        print(f"  Modell: {PETALS_MODEL}")
+        print(f"  Privater Swarm: {'Ja' if args.private_swarm else 'Nein (public)'}")
+        print(f"  HF Token: {'Ja' if PETALS_TOKEN else 'Nein'}")
+    print(f"{'='*50}")
+    print()
+
+    uvicorn.run(app, host="0.0.0.0", port=args.port)
