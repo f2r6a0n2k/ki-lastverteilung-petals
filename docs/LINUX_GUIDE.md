@@ -73,11 +73,16 @@ Sollte `{"status":"ok"}` zurückgeben.
 
 ### Automatisiert (mit Projekt-Skript)
 
+**llama.cpp Worker:**
 ```bash
 bash scripts/install_worker_linux.sh 8080
 ```
 
-**Hinweis:** Dieses Skript installiert Petals mit PyTorch. Für manuelles llama.cpp-Setup nutze Option A oben.
+**Petals Worker:**
+```bash
+bash scripts/install_petals_worker.sh        # CPU-only
+bash scripts/install_petals_worker.sh cuda   # Mit CUDA
+```
 
 ---
 
