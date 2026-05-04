@@ -133,21 +133,35 @@ pyenv global 3.11.8
 
 ### 2. PyTorch installieren
 
+**Wichtig:** Petals benötigt eine ältere PyTorch-Version (< 2.2) für Kompatibilität mit `hivemind`.
+
 **Mit NVIDIA GPU:**
 ```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install 'torch>=2.0,<2.2' 'torchvision>=0.15,<0.17' 'torchaudio>=2.0,<2.2' --index-url https://download.pytorch.org/whl/cu121
 ```
 
 **CPU-only (langsamer):**
 ```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip install 'torch>=2.0,<2.2' 'torchvision>=0.15,<0.17' 'torchaudio>=2.0,<2.2' --index-url https://download.pytorch.org/whl/cpu
 ```
 
 ### 3. Petals installieren
 
 ```bash
+# setuptools zuerst installieren (für hivemind Build)
+pip install setuptools
+
+# Petals mit allen Abhängigkeiten
 pip install petals
+
+# Fehlende Abhängigkeiten explizit installieren
+pip install async-timeout bitsandbytes cpufeature Dijkstar humanfriendly
 ```
+
+> **Falls `hivemind` Build fehlschlägt** (`ModuleNotFoundError: No module named 'pkg_resources'`):
+> ```bash
+> pip install --no-build-isolation hivemind==1.1.10.post2
+> ```
 
 ### 4. Worker starten
 
