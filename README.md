@@ -1,4 +1,8 @@
-# KI-Lastverteilung - Verteilte KI-Inferenz
+# KI-Lastverteilung – Petals-Forschung (Archiv)
+
+> **Hinweis:** Die aktive Entwicklung dieses Projekts wurde in das Repository  
+> **[github.com/f2r6a0n2k/ki-lastverteilung-worker](https://github.com/f2r6a0n2k/ki-lastverteilung-worker)** verlagert.  
+> Dieses Repository dokumentiert die Petals-Integration und ältere Architekturkonzepte.
 
 [![Watch the video](https://img.youtube.com/vi/nH_zVxJemSU/0.jpg)](https://youtu.be/nH_zVxJemSU)
 
